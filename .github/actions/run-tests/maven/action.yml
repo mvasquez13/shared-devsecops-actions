@@ -84,14 +84,49 @@ runs:
           target/test-classes/
         retention-days: 30
 
-    - name: Publish Test Results
+    - name: Process Test Results
       if: always()
-      uses: dorny/test-reporter@v1
-      with:
-        name: Maven Tests
-        path: target/surefire-reports/TEST-*.xml
-        reporter: java-junit
-        fail-on-error: false
+      shell: bash
+      run: |
+        echo "📊 Processing Maven test results..."
+        
+        if [ -d "target/surefire-reports" ]; then
+          # Count test results
+          PASSED=$(find target/surefire-reports -name "TEST-*.xml" -exec grep -h 'tests=' {} \; | sed 's/.*tests="\([0-9]*\)".*/\1/' | awk '{sum+=$1} END {print sum+0}')
+          FAILED=$(find target/surefire-reports -name "TEST-*.xml" -exec grep -h 'failures=' {} \; | sed 's/.*failures="\([0-9]*\)".*/\1/' | awk '{sum+=$1} END {print sum+0}')
+          ERRORS=$(find target/surefire-reports -name "TEST-*.xml" -exec grep -h 'errors=' {} \; | sed 's/.*errors="\([0-9]*\)".*/\1/' | awk '{sum+=$1} END {print sum+0}')
+          SKIPPED=$(find target/surefire-reports -name "TEST-*.xml" -exec grep -h 'skipped=' {} \; | sed 's/.*skipped="\([0-9]*\)".*/\1/' | awk '{sum+=$1} END {print sum+0}')
+          
+          TOTAL=$((PASSED + FAILED + ERRORS + SKIPPED))
+          
+          # Add to GitHub Step Summary
+          echo "## 🧪 Maven Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
+          echo "| ❌ Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⚠️ Errors | $ERRORS |" >> $GITHUB_STEP_SUMMARY
+          echo "| ⏭️ Skipped | $SKIPPED |" >> $GITHUB_STEP_SUMMARY
+          echo "| **📊 Total** | **$TOTAL** |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ $FAILED -gt 0 ] || [ $ERRORS -gt 0 ]; then
+            echo "❌ Tests failed: $FAILED failures, $ERRORS errors"
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ❌ Failed Tests Details:" >> $GITHUB_STEP_SUMMARY
+            
+            # Extract failed test details
+            find target/surefire-reports -name "TEST-*.xml" -exec grep -l 'failures="[^0]"' {} \; | while read file; do
+              class_name=$(basename "$file" .xml | sed 's/TEST-//')
+              echo "- **$class_name**" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "✅ All tests passed!"
+          fi
+        else
+          echo "⚠️ No test reports found"
+          echo "## ⚠️ No Maven test reports found" >> $GITHUB_STEP_SUMMARY
+          echo "Make sure Maven Surefire plugin is configured correctly." >> $GITHUB_STEP_SUMMARY
+        fi
 
     - name: Generate JaCoCo Coverage Report
       id: coverage
