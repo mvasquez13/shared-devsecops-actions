@@ -1,0 +1,136 @@
+name: 'Build Docker Image'
+description: 'Build and push Docker images with semantic versioning'
+
+inputs:
+  app-name:
+    description: 'Application name'
+    required: true
+  registry-url:
+    description: 'Container registry URL'
+    required: true
+  image-name:
+    description: 'Docker image name'
+    required: true
+  dockerfile-path:
+    description: 'Path to Dockerfile'
+    required: false
+    default: './Dockerfile'
+  build-context:
+    description: 'Docker build context'
+    required: false
+    default: '.'
+  registry-username:
+    description: 'Container registry username'
+    required: true
+  registry-password:
+    description: 'Container registry password'
+    required: true
+  app-version:
+    description: 'Application version (from pom.xml or package.json)'
+    required: false
+    default: 'unknown'
+  use-cache:
+    description: 'Enable Docker build cache'
+    required: false
+    default: 'true'
+
+outputs:
+  image-tags:
+    description: 'All generated image tags'
+    value: ${{ steps.build.outputs.imageid }}
+  image-digest:
+    description: 'Image digest'
+    value: ${{ steps.build.outputs.digest }}
+  semantic-version:
+    description: 'Generated semantic version'
+    value: ${{ steps.version.outputs.semantic-version }}
+  full-image-url:
+    description: 'Complete image URL with semantic version'
+    value: ${{ steps.version.outputs.full-image-url }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Generate Semantic Version
+      id: version
+      shell: bash
+      run: |
+        echo "📋 Generating semantic version..."
+        
+        # Get current date in YYYYMMDD format
+        DATE=$(date +%Y%m%d)
+        
+        # Get app version (remove SNAPSHOT if present)
+        APP_VERSION="${{ inputs.app-version }}"
+        CLEAN_VERSION=$(echo "$APP_VERSION" | sed 's/-SNAPSHOT//g' | sed 's/^v//g')
+        
+        # If version is unknown, try to extract from pom.xml
+        if [ "$APP_VERSION" = "unknown" ] || [ -z "$APP_VERSION" ]; then
+          if [ -f "pom.xml" ]; then
+            CLEAN_VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null | sed 's/-SNAPSHOT//g' || echo "1.0.0")
+          elif [ -f "package.json" ]; then
+            CLEAN_VERSION=$(node -p "require('./package.json').version" 2>/dev/null || echo "1.0.0")
+          else
+            CLEAN_VERSION="1.0.0"
+          fi
+        fi
+        
+        # Generate semantic version: version-date
+        SEMANTIC_VERSION="${CLEAN_VERSION}-${DATE}"
+        FULL_IMAGE_URL="${{ inputs.registry-url }}/${{ inputs.image-name }}:${SEMANTIC_VERSION}"
+        
+        echo "semantic-version=$SEMANTIC_VERSION" >> $GITHUB_OUTPUT
+        echo "full-image-url=$FULL_IMAGE_URL" >> $GITHUB_OUTPUT
+        
+        echo "✅ Generated semantic version: $SEMANTIC_VERSION"
+        echo "🐳 Full image URL: $FULL_IMAGE_URL"
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry-url }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}
+
+    - name: Build and Push Docker Image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ inputs.build-context }}
+        file: ${{ inputs.dockerfile-path }}
+        push: true
+        tags: |
+          ${{ steps.version.outputs.full-image-url }}
+          ${{ inputs.registry-url }}/${{ inputs.image-name }}:latest
+        labels: |
+          org.opencontainers.image.title=${{ inputs.app-name }}
+          org.opencontainers.image.version=${{ steps.version.outputs.semantic-version }}
+        cache-from: ${{ inputs.use-cache == 'true' && 'type=gha' || '' }}
+        cache-to: ${{ inputs.use-cache == 'true' && 'type=gha,mode=max' || '' }}
+        build-args: |
+          APP_VERSION=${{ steps.version.outputs.semantic-version }}
+          BUILD_DATE={{date 'YYYY-MM-DDTHH:mm:ssZ'}}
+
+    - name: Generate Image Summary
+      shell: bash
+      run: |
+        echo "## 🐳 Docker Image Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Application**: ${{ inputs.app-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Semantic Version**: ${{ steps.version.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Registry**: ${{ inputs.registry-url }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image Name**: ${{ inputs.image-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Full Image URL**: \`${{ steps.version.outputs.full-image-url }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image Digest**: \`${{ steps.build.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Build Context**: ${{ inputs.build-context }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Dockerfile**: ${{ inputs.dockerfile-path }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Cache Enabled**: ${{ inputs.use-cache == 'true' && '✅ Yes' || '❌ No' }}" >> $GITHUB_STEP_SUMMARY
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🏷️ Generated Tags" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+        echo "${{ steps.version.outputs.full-image-url }}" >> $GITHUB_STEP_SUMMARY
+        echo "${{ inputs.registry-url }}/${{ inputs.image-name }}:latest" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

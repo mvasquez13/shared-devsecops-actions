@@ -1,0 +1,191 @@
+name: 'Teams Notification'
+description: 'Send notifications to Microsoft Teams'
+
+inputs:
+  webhook-url:
+    description: 'Microsoft Teams webhook URL'
+    required: true
+  title:
+    description: 'Notification title'
+    required: true
+  message:
+    description: 'Notification message'
+    required: true
+  status:
+    description: 'Build/deployment status (success, failure, warning)'
+    required: false
+    default: 'info'
+  repository:
+    description: 'Repository name'
+    required: false
+    default: ${{ github.repository }}
+  run-url:
+    description: 'GitHub Actions run URL'
+    required: false
+    default: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  actor:
+    description: 'User who triggered the action'
+    required: false
+    default: ${{ github.actor }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Send Teams Notification
+      shell: bash
+      run: |
+        echo "📢 Sending Teams notification..."
+        
+        # Determine status color and icon
+        case "${{ inputs.status }}" in
+          "success")
+            COLOR="Good"
+            ICON="✅"
+            ;;
+          "failure")
+            COLOR="Attention"
+            ICON="❌"
+            ;;
+          "warning")
+            COLOR="Warning"
+            ICON="⚠️"
+            ;;
+          *)
+            COLOR=""
+            ICON="ℹ️"
+            ;;
+        esac
+        
+        # Get current timestamp
+        TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        
+        # Create Teams message payload
+        cat > teams-payload.json << EOF
+{
+  "@type": "MessageCard",
+  "@context": "https://schema.org/extensions",
+  "summary": "${{ inputs.title }}",
+  "themeColor": "$COLOR",
+  "sections": [
+    {
+      "activityTitle": "$ICON ${{ inputs.title }}",
+      "activitySubtitle": "${{ inputs.repository }}",
+      "activityImage": "https://github.com/github.png",
+      "facts": [
+        {
+          "name": "Repository:",
+          "value": "${{ inputs.repository }}"
+        },
+        {
+          "name": "Triggered by:",
+          "value": "${{ inputs.actor }}"
+        },
+        {
+          "name": "Status:",
+          "value": "${{ inputs.status }}"
+        },
+        {
+          "name": "Timestamp:",
+          "value": "$TIMESTAMP"
+        }
+      ],
+      "text": "${{ inputs.message }}"
+    }
+  ],
+  "potentialAction": [
+    {
+      "@type": "OpenUri",
+      "name": "View Action",
+      "targets": [
+        {
+          "os": "default",
+          "uri": "${{ inputs.run-url }}"
+        }
+      ]
+    }
+  ]
+}
+EOF
+        
+        echo "Sending notification to Teams..."
+        
+        # Send notification
+        RESPONSE=$(curl -s -w "%{http_code}" -o response.json \
+          -H "Content-Type: application/json" \
+          -d @teams-payload.json \
+          "${{ inputs.webhook-url }}")
+        
+        HTTP_CODE=${RESPONSE: -3}
+        
+        if [ "$HTTP_CODE" -eq 200 ]; then
+          echo "✅ Teams notification sent successfully"
+        else
+          echo "❌ Failed to send Teams notification (HTTP: $HTTP_CODE)"
+          echo "Response:"
+          cat response.json 2>/dev/null || echo "No response body"
+          exit 1
+        fi
+        
+        # Cleanup
+        rm -f teams-payload.json response.json
+
+    - name: Send Slack Notification (Fallback)
+      if: failure()
+      shell: bash
+      run: |
+        echo "📱 Sending Slack fallback notification..."
+        
+        # If Teams fails and SLACK_WEBHOOK is available, send to Slack
+        if [ -n "$SLACK_WEBHOOK" ]; then
+          # Determine color
+          case "${{ inputs.status }}" in
+            "success") COLOR="good";;
+            "failure") COLOR="danger";;
+            "warning") COLOR="warning";;
+            *) COLOR="";;
+          esac
+          
+          # Create Slack payload
+          cat > slack-payload.json << EOF
+{
+  "attachments": [
+    {
+      "color": "$COLOR",
+      "title": "${{ inputs.title }}",
+      "text": "${{ inputs.message }}",
+      "fields": [
+        {
+          "title": "Repository",
+          "value": "${{ inputs.repository }}",
+          "short": true
+        },
+        {
+          "title": "Status",
+          "value": "${{ inputs.status }}",
+          "short": true
+        },
+        {
+          "title": "Triggered by",
+          "value": "${{ inputs.actor }}",
+          "short": true
+        }
+      ],
+      "actions": [
+        {
+          "type": "button",
+          "text": "View Action",
+          "url": "${{ inputs.run-url }}"
+        }
+      ]
+    }
+  ]
+}
+EOF
+          
+          # Send to Slack
+          curl -X POST -H 'Content-type: application/json' \
+            --data @slack-payload.json \
+            "$SLACK_WEBHOOK" || echo "Slack notification also failed"
+          
+          rm -f slack-payload.json
+        fi

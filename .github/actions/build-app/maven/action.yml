@@ -1,0 +1,143 @@
+name: 'Build Application'
+description: 'Build Maven application and prepare artifacts'
+
+inputs:
+  app-name:
+    description: 'Application name'
+    required: true
+  maven-args:
+    description: 'Additional Maven arguments'
+    required: false
+    default: '-B'
+  build-profiles:
+    description: 'Maven profiles to activate'
+    required: false
+    default: ''
+  skip-tests:
+    description: 'Skip tests during build'
+    required: false
+    default: 'false'
+  output-directory:
+    description: 'Output directory for artifacts'
+    required: false
+    default: 'target'
+
+outputs:
+  artifact-name:
+    description: 'Name of the built artifact'
+    value: ${{ steps.build.outputs.artifact-name }}
+  artifact-path:
+    description: 'Path to the built artifact'
+    value: ${{ steps.build.outputs.artifact-path }}
+  build-version:
+    description: 'Application build version'
+    value: ${{ steps.build.outputs.version }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Cache Maven dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2/repository
+        key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+        restore-keys: |
+          ${{ runner.os }}-maven-
+
+    - name: Build Application
+      id: build
+      shell: bash
+      run: |
+        echo "🏗️ Building application: ${{ inputs.app-name }}"
+        
+        # Construct Maven command
+        MAVEN_CMD="mvn clean package ${{ inputs.maven-args }}"
+        
+        # Add profiles if specified
+        if [ -n "${{ inputs.build-profiles }}" ]; then
+          MAVEN_CMD="$MAVEN_CMD -P${{ inputs.build-profiles }}"
+        fi
+        
+        # Skip tests if requested
+        if [ "${{ inputs.skip-tests }}" = "true" ]; then
+          MAVEN_CMD="$MAVEN_CMD -DskipTests"
+        fi
+        
+        echo "Executing: $MAVEN_CMD"
+        eval $MAVEN_CMD
+        
+        # Find the built JAR file
+        if [ -d "${{ inputs.output-directory }}" ]; then
+          JAR_FILE=$(find ${{ inputs.output-directory }} -name "*.jar" -not -name "*-sources.jar" -not -name "*-javadoc.jar" | head -1)
+          
+          if [ -n "$JAR_FILE" ] && [ -f "$JAR_FILE" ]; then
+            ARTIFACT_NAME=$(basename "$JAR_FILE")
+            echo "artifact-name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+            echo "artifact-path=$JAR_FILE" >> $GITHUB_OUTPUT
+            echo "✅ Built artifact: $ARTIFACT_NAME"
+            echo "📁 Artifact path: $JAR_FILE"
+            
+            # Try to extract version from pom.xml
+            if [ -f "pom.xml" ]; then
+              VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null || echo "unknown")
+              echo "version=$VERSION" >> $GITHUB_OUTPUT
+              echo "📋 Version: $VERSION"
+            else
+              echo "version=unknown" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "❌ No JAR file found in ${{ inputs.output-directory }}"
+            exit 1
+          fi
+        else
+          echo "❌ Output directory ${{ inputs.output-directory }} not found"
+          exit 1
+        fi
+
+    - name: Validate Build Artifacts
+      shell: bash
+      run: |
+        echo "🔍 Validating build artifacts..."
+        
+        ARTIFACT_PATH="${{ steps.build.outputs.artifact-path }}"
+        
+        if [ -f "$ARTIFACT_PATH" ]; then
+          FILE_SIZE=$(stat -c%s "$ARTIFACT_PATH" 2>/dev/null || stat -f%z "$ARTIFACT_PATH" 2>/dev/null || echo "0")
+          echo "📊 Artifact size: $(numfmt --to=iec $FILE_SIZE)"
+          
+          # Check if it's a valid JAR file
+          if file "$ARTIFACT_PATH" | grep -q "Java archive"; then
+            echo "✅ Valid JAR file detected"
+          else
+            echo "⚠️ Warning: File may not be a valid JAR archive"
+          fi
+          
+          # List JAR contents (first few entries)
+          echo "📦 JAR contents (sample):"
+          jar -tf "$ARTIFACT_PATH" | head -10
+          
+          if [ $(jar -tf "$ARTIFACT_PATH" | wc -l) -gt 10 ]; then
+            echo "... and $(($(jar -tf "$ARTIFACT_PATH" | wc -l) - 10)) more files"
+          fi
+        else
+          echo "❌ Artifact not found at: $ARTIFACT_PATH"
+          exit 1
+        fi
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ inputs.app-name }}-${{ steps.build.outputs.version }}
+        path: ${{ steps.build.outputs.artifact-path }}
+        retention-days: 30
+
+    - name: Generate Build Summary
+      shell: bash
+      run: |
+        echo "## 🏗️ Application Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Application**: ${{ inputs.app-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version**: ${{ steps.build.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Artifact**: ${{ steps.build.outputs.artifact-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Path**: \`${{ steps.build.outputs.artifact-path }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Profiles**: ${{ inputs.build-profiles || 'None' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Tests Skipped**: ${{ inputs.skip-tests == 'true' && '✅ Yes' || '❌ No' }}" >> $GITHUB_STEP_SUMMARY

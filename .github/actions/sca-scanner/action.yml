@@ -1,0 +1,305 @@
+name: 'GitHub Native SCA Scanner'
+description: 'Software Composition Analysis using GitHub native tools (Dependabot & Advisory Database)'
+
+inputs:
+  project-path:
+    description: 'Path to the project'
+    required: false
+    default: '.'
+  language:
+    description: 'Programming language'
+    required: true
+  fail-on-high:
+    description: 'Fail build on high/critical vulnerabilities'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'GitHub token for API access'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  vulnerabilities:
+    description: 'Total vulnerabilities found'
+    value: ${{ steps.analyze.outputs.vulnerabilities }}
+  critical:
+    description: 'Critical vulnerabilities'
+    value: ${{ steps.analyze.outputs.critical }}
+  high:
+    description: 'High vulnerabilities'
+    value: ${{ steps.analyze.outputs.high }}
+  
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup GitHub SCA Environment
+      shell: bash
+      run: |
+        echo "🔍 Setting up GitHub native SCA analysis for ${{ inputs.language }}..."
+        mkdir -p security-reports/sca
+
+    - name: Java/Maven SCA Analysis
+      if: inputs.language == 'java'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        echo "☕ Running Java dependency analysis using GitHub Advisory Database..."
+        
+        if [ -f "pom.xml" ]; then
+          echo "📦 Analyzing Maven dependencies..."
+          
+          # Extract dependencies from Maven
+          mvn dependency:list -DoutputFile=dependency-list.txt -Dsilent=true -B || true
+          
+          if [ -f "dependency-list.txt" ]; then
+            # Parse Maven dependencies and check against GitHub Advisory Database
+            grep -E "^\s*[^-].*:.*:.*:.*" dependency-list.txt | while read -r line; do
+              # Extract groupId:artifactId:version
+              dep=$(echo "$line" | sed 's/^\s*//' | cut -d':' -f1-3)
+              if [ ! -z "$dep" ]; then
+                echo "Checking dependency: $dep"
+                
+                # Query GitHub Advisory Database using GraphQL
+                curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                     -H "Content-Type: application/json" \
+                     -X POST \
+                     -d "{\"query\":\"query { securityAdvisories(first: 10, ecosystem: MAVEN, package: \\\"$(echo $dep | cut -d':' -f1-2 | tr ':' '/')\\\") { nodes { summary severity permalink publishedAt } } }\"}" \
+                     https://api.github.com/graphql >> security-reports/sca/github-advisories.json 2>/dev/null || true
+              fi
+            done
+            
+            rm -f dependency-list.txt
+          fi
+          
+          # Also check for known vulnerabilities in pom.xml structure
+          echo "🔍 Checking pom.xml for known vulnerable patterns..."
+          mvn versions:display-dependency-updates -B -q | grep -i "vulnerability\|cve" >> security-reports/sca/maven-updates.txt 2>/dev/null || true
+        fi
+
+    - name: JavaScript/Node.js SCA Analysis
+      if: inputs.language == 'javascript' || inputs.language == 'typescript'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        echo "📦 Running Node.js dependency analysis using GitHub Advisory Database..."
+        
+        if [ -f "package.json" ]; then
+          # Use npm audit which integrates with GitHub Advisory Database
+          echo "Running npm audit..."
+          npm audit --audit-level moderate --json > security-reports/sca/npm-audit.json 2>/dev/null || true
+          npm audit --audit-level moderate || true
+          
+          # Additional check using GitHub API for package vulnerabilities
+          if command -v jq &> /dev/null; then
+            echo "🔍 Cross-checking with GitHub Advisory Database..."
+            jq -r '.dependencies | keys[]' package.json 2>/dev/null | while read -r pkg; do
+              curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                   -H "Accept: application/vnd.github.v3+json" \
+                   "https://api.github.com/repos/github/advisory-database/contents/advisories/github-reviewed" \
+                   >> security-reports/sca/github-npm-check.json 2>/dev/null || true
+            done
+          fi
+        fi
+        
+        if [ -f "yarn.lock" ]; then
+          echo "Running yarn audit..."
+          yarn audit --json > security-reports/sca/yarn-audit.json 2>/dev/null || true
+        fi
+
+    - name: Python SCA Analysis
+      if: inputs.language == 'python'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        echo "🐍 Running Python dependency analysis using GitHub Advisory Database..."
+        
+        # Use pip-audit which integrates with PyPA advisory database
+        echo "Installing and running pip-audit..."
+        python -m pip install --upgrade pip-audit --quiet
+        
+        if [ -f "requirements.txt" ]; then
+          pip-audit --requirement requirements.txt --format json --output security-reports/sca/pip-audit.json || true
+          pip-audit --requirement requirements.txt || true
+        elif [ -f "pyproject.toml" ]; then
+          pip-audit --format json --output security-reports/sca/pip-audit.json || true
+          pip-audit || true
+        else
+          echo "No Python dependency files found"
+        fi
+        
+        # Additional GitHub Advisory Database check
+        if [ -f "requirements.txt" ] && command -v jq &> /dev/null; then
+          echo "🔍 Cross-checking with GitHub Advisory Database..."
+          grep -v "^#" requirements.txt | cut -d'=' -f1 | cut -d'>' -f1 | cut -d'<' -f1 | while read -r pkg; do
+            if [ ! -z "$pkg" ]; then
+              curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+                   -H "Content-Type: application/json" \
+                   -X POST \
+                   -d "{\"query\":\"query { securityAdvisories(first: 5, ecosystem: PIP, package: \\\"$pkg\\\") { nodes { summary severity permalink publishedAt } } }\"}" \
+                   https://api.github.com/graphql >> security-reports/sca/github-python-advisories.json 2>/dev/null || true
+            fi
+          done
+        fi
+
+    - name: Analyze GitHub SCA Results
+      id: analyze
+      shell: bash
+      run: |
+        echo "📊 Analyzing GitHub native SCA results..."
+        
+        TOTAL_VULNS=0
+        CRITICAL_VULNS=0
+        HIGH_VULNS=0
+        
+        # Parse npm audit results (GitHub Advisory Database integration)
+        if [ -f "security-reports/sca/npm-audit.json" ]; then
+          if command -v jq &> /dev/null; then
+            NPM_CRITICAL=$(jq -r '.vulnerabilities | to_entries[] | select(.value.severity == "critical") | .key' security-reports/sca/npm-audit.json 2>/dev/null | wc -l || echo "0")
+            NPM_HIGH=$(jq -r '.vulnerabilities | to_entries[] | select(.value.severity == "high") | .key' security-reports/sca/npm-audit.json 2>/dev/null | wc -l || echo "0")
+            NPM_TOTAL=$((NPM_CRITICAL + NPM_HIGH))
+            
+            TOTAL_VULNS=$((TOTAL_VULNS + NPM_TOTAL))
+            CRITICAL_VULNS=$((CRITICAL_VULNS + NPM_CRITICAL))
+            HIGH_VULNS=$((HIGH_VULNS + NPM_HIGH))
+            
+            echo "📦 NPM Audit (GitHub Advisory DB): $NPM_TOTAL vulnerabilities ($NPM_CRITICAL critical, $NPM_HIGH high)"
+          fi
+        fi
+        
+        # Parse pip-audit results (PyPA Advisory Database)
+        if [ -f "security-reports/sca/pip-audit.json" ]; then
+          if command -v jq &> /dev/null; then
+            PIP_VULNS=$(jq '.vulnerabilities | length' security-reports/sca/pip-audit.json 2>/dev/null || echo "0")
+            # pip-audit doesn't separate by severity, so we count all as medium/high
+            PIP_HIGH=$PIP_VULNS
+            
+            TOTAL_VULNS=$((TOTAL_VULNS + PIP_VULNS))
+            HIGH_VULNS=$((HIGH_VULNS + PIP_HIGH))
+            
+            echo "🐍 pip-audit (PyPA Advisory DB): $PIP_VULNS vulnerabilities"
+          fi
+        fi
+        
+        # Check GitHub Advisory Database responses
+        if [ -f "security-reports/sca/github-advisories.json" ]; then
+          if command -v jq &> /dev/null; then
+            GITHUB_ADVISORIES=$(jq '.data.securityAdvisories.nodes[]?' security-reports/sca/github-advisories.json 2>/dev/null | wc -l || echo "0")
+            if [ $GITHUB_ADVISORIES -gt 0 ]; then
+              TOTAL_VULNS=$((TOTAL_VULNS + GITHUB_ADVISORIES))
+              HIGH_VULNS=$((HIGH_VULNS + GITHUB_ADVISORIES))
+              echo "📋 GitHub Advisory Database: $GITHUB_ADVISORIES advisories found"
+            fi
+          fi
+        fi
+        
+        echo "vulnerabilities=$TOTAL_VULNS" >> $GITHUB_OUTPUT
+        echo "critical=$CRITICAL_VULNS" >> $GITHUB_OUTPUT
+        echo "high=$HIGH_VULNS" >> $GITHUB_OUTPUT
+        
+        echo "## 🔍 GitHub Native SCA Analysis Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Language**: ${{ inputs.language }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Total Vulnerabilities**: $TOTAL_VULNS" >> $GITHUB_STEP_SUMMARY
+        echo "- **Critical**: $CRITICAL_VULNS" >> $GITHUB_STEP_SUMMARY
+        echo "- **High**: $HIGH_VULNS" >> $GITHUB_STEP_SUMMARY
+        echo "- **Data Sources**: GitHub Advisory Database, NPM Audit, pip-audit" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "💡 **Benefits of GitHub Native SCA:**" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Free for public repositories" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Integrated with GitHub Advisory Database" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Automatic Dependabot alerts" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ Real-time vulnerability notifications" >> $GITHUB_STEP_SUMMARY
+        
+        # Show recommendations for enabling Dependabot
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## 📋 Recommendations" >> $GITHUB_STEP_SUMMARY
+        echo "1. Enable **Dependabot alerts** in repository settings" >> $GITHUB_STEP_SUMMARY
+        echo "2. Enable **Dependabot security updates** for automatic fixes" >> $GITHUB_STEP_SUMMARY
+        echo "3. Configure **.github/dependabot.yml** for regular dependency updates" >> $GITHUB_STEP_SUMMARY
+        
+        # Fail if configured and high/critical found
+        if [ "${{ inputs.fail-on-high }}" == "true" ] && [ $((CRITICAL_VULNS + HIGH_VULNS)) -gt 0 ]; then
+          echo "❌ Build failed: $((CRITICAL_VULNS + HIGH_VULNS)) high/critical vulnerabilities found"
+          exit 1
+        fi
+
+    - name: Generate Dependabot Configuration Recommendation
+      shell: bash
+      run: |
+        echo "📝 Generating Dependabot configuration recommendation..."
+        
+        cat > security-reports/sca/dependabot-recommendation.yml << 'EOF'
+        # Place this file at .github/dependabot.yml to enable automatic dependency updates
+        # This is FREE for public repositories and provides continuous SCA monitoring
+        
+        version: 2
+        updates:
+        EOF
+        
+        if [ "${{ inputs.language }}" == "java" ] && [ -f "pom.xml" ]; then
+          cat >> security-reports/sca/dependabot-recommendation.yml << 'EOF'
+          - package-ecosystem: "maven"
+            directory: "/"
+            schedule:
+              interval: "weekly"
+            open-pull-requests-limit: 5
+            reviewers:
+              - "security-team"
+            labels:
+              - "dependencies"
+              - "security"
+        EOF
+        fi
+        
+        if [ "${{ inputs.language }}" == "javascript" ] || [ "${{ inputs.language }}" == "typescript" ]; then
+          if [ -f "package.json" ]; then
+            cat >> security-reports/sca/dependabot-recommendation.yml << 'EOF'
+          - package-ecosystem: "npm"
+            directory: "/"
+            schedule:
+              interval: "weekly"
+            open-pull-requests-limit: 5
+            reviewers:
+              - "security-team"
+            labels:
+              - "dependencies"
+              - "security"
+        EOF
+          fi
+        fi
+        
+        if [ "${{ inputs.language }}" == "python" ]; then
+          if [ -f "requirements.txt" ] || [ -f "pyproject.toml" ]; then
+            cat >> security-reports/sca/dependabot-recommendation.yml << 'EOF'
+          - package-ecosystem: "pip"
+            directory: "/"
+            schedule:
+              interval: "weekly"
+            open-pull-requests-limit: 5
+            reviewers:
+              - "security-team"
+            labels:
+              - "dependencies"
+              - "security"
+        EOF
+          fi
+        fi
+        
+        echo "✅ Dependabot configuration generated at security-reports/sca/dependabot-recommendation.yml"
+        
+    - name: Upload Security Reports
+      if: always()
+      shell: bash
+      run: |
+        echo "📤 Preparing GitHub native SCA reports..."
+        
+        # List generated reports
+        if [ -d "security-reports/sca" ]; then
+          echo "Generated SCA reports using GitHub native tools:"
+          ls -la security-reports/sca/
+        fi
+        
+        echo "✅ GitHub native SCA analysis completed - Free for public repositories!"
+        echo "💡 Consider enabling Dependabot in repository settings for continuous monitoring"

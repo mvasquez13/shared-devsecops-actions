@@ -1,0 +1,144 @@
+name: 'CodeQL SAST Scanner'
+description: 'Static Application Security Testing using GitHub CodeQL'
+
+inputs:
+  language:
+    description: 'Programming language (java, javascript, python, csharp, go, ruby)'
+    required: true
+  build-command:
+    description: 'Build command for compiled languages (Maven, Gradle, etc.)'
+    required: true
+
+outputs:
+  results-count:
+    description: 'Number of security issues found'
+    value: ${{ steps.results.outputs.count }}
+  database-path:
+    description: 'Path to CodeQL database'
+    value: ${{ steps.init.outputs.codeql-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Initialize CodeQL
+      id: init
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ inputs.language }}
+
+    - name: Setup Maven for Java Analysis
+      if: inputs.language == 'java-kotlin'
+      shell: bash
+      run: |
+        echo "☕ Setting up Maven environment for CodeQL analysis..."
+        if [ -f "pom.xml" ]; then
+          echo "📦 Resolving Maven dependencies..."
+          mvn dependency:resolve -B -q
+        fi
+
+    - name: Build Application for Analysis
+      if: inputs.language == 'java-kotlin'
+      shell: bash
+      run: |
+        echo "🏗️ Building application for CodeQL analysis..."
+        ${{ inputs.build-command }}
+        
+        # Verify build artifacts
+        if [ -d "target/classes" ]; then
+          echo "✅ Build successful - classes found in target/classes"
+          echo "📊 Compiled classes count: $(find target/classes -name "*.class" | wc -l)"
+        else
+          echo "⚠️ Warning: No compiled classes found in target/classes"
+        fi
+
+
+    - name: Perform CodeQL Analysis
+      id: analyze
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: "codeql-${{ inputs.language }}"
+
+    - name: Parse CodeQL Results
+      id: results
+      shell: bash
+      run: |
+        echo "� Parsing CodeQL analysis results..."
+        
+        # Find the SARIF file
+        SARIF_FILE=""
+        if [ -d "${{ steps.analyze.outputs.sarif-output }}" ]; then
+          SARIF_FILE=$(find "${{ steps.analyze.outputs.sarif-output }}" -name "*.sarif" -type f | head -1)
+        fi
+        
+        if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
+          echo "� Found SARIF file: $SARIF_FILE"
+          
+          # Count total results
+          TOTAL_RESULTS=$(jq '.runs[].results | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          
+          # Count by severity levels
+          CRITICAL_COUNT=$(jq '.runs[].results[] | select(.level == "error") | .level' "$SARIF_FILE" 2>/dev/null | wc -l || echo "0")
+          WARNING_COUNT=$(jq '.runs[].results[] | select(.level == "warning") | .level' "$SARIF_FILE" 2>/dev/null | wc -l || echo "0")
+          INFO_COUNT=$(jq '.runs[].results[] | select(.level == "note") | .level' "$SARIF_FILE" 2>/dev/null | wc -l || echo "0")
+          
+          echo "count=$TOTAL_RESULTS" >> $GITHUB_OUTPUT
+          echo "critical=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+          echo "warning=$WARNING_COUNT" >> $GITHUB_OUTPUT
+          echo "info=$INFO_COUNT" >> $GITHUB_OUTPUT
+          echo "sarif-file=$SARIF_FILE" >> $GITHUB_OUTPUT
+          
+          echo "🔍 CodeQL Analysis Summary:"
+          echo "  - Total Issues: $TOTAL_RESULTS"
+          echo "  - Critical/Error: $CRITICAL_COUNT"
+          echo "  - Warning: $WARNING_COUNT" 
+          echo "  - Info: $INFO_COUNT"
+          
+          # Show some example issues if found
+          if [ "$TOTAL_RESULTS" -gt 0 ]; then
+            echo ""
+            echo "📋 Sample Issues Found:"
+            jq -r '.runs[].results[:3] | .[] | "- \(.ruleId): \(.message.text)"' "$SARIF_FILE" 2>/dev/null || echo "Could not parse issue details"
+          fi
+        else
+          echo "⚠️ No SARIF results file found"
+          echo "count=0" >> $GITHUB_OUTPUT
+          echo "critical=0" >> $GITHUB_OUTPUT
+          echo "warning=0" >> $GITHUB_OUTPUT
+          echo "info=0" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Check Security Threshold
+      if: inputs.fail-on-error == 'true'
+      shell: bash
+      run: |
+        CRITICAL_COUNT="${{ steps.results.outputs.critical }}"
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+          echo "❌ Found $CRITICAL_COUNT critical security issues!"
+          echo "Failing as requested by fail-on-error=true"
+          exit 1
+        else
+          echo "✅ No critical security issues found"
+        fi
+
+    - name: Generate Security Summary
+      shell: bash
+      run: |
+        echo "## 🔍 CodeQL SAST Analysis Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Language**: ${{ inputs.language }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Query Suite**: ${{ inputs.queries }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Build Command**: \`${{ inputs.build-command }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Total Issues**: ${{ steps.results.outputs.count || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Critical/Error**: ${{ steps.results.outputs.critical || 'N/A' }} 🚨" >> $GITHUB_STEP_SUMMARY
+        echo "- **Warning**: ${{ steps.results.outputs.warning || 'N/A' }} ⚠️" >> $GITHUB_STEP_SUMMARY
+        echo "- **Info**: ${{ steps.results.outputs.info || 'N/A' }} ℹ️" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ steps.results.outputs.count }}" -gt 0 ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🎯 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Check the **Security** tab for detailed findings" >> $GITHUB_STEP_SUMMARY
+          echo "2. Review the uploaded SARIF artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "3. Address critical and high-severity issues first" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "🎉 **No security issues detected!**" >> $GITHUB_STEP_SUMMARY
+        fi

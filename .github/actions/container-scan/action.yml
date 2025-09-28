@@ -1,0 +1,169 @@
+name: 'Container Security Scan'
+description: 'Scan Docker container images for security vulnerabilities'
+
+inputs:
+  image:
+    description: 'Docker image to scan (with tag)'
+    required: true
+  severity-threshold:
+    description: 'Minimum severity to report (LOW, MEDIUM, HIGH, CRITICAL)'
+    required: false
+    default: 'MEDIUM'
+  fail-on-critical:
+    description: 'Fail the action if critical vulnerabilities are found'
+    required: false
+    default: 'true'
+  output-format:
+    description: 'Output format (table, json, sarif)'
+    required: false
+    default: 'table'
+  registry-username:
+    description: 'Registry username for private images'
+    required: false
+  registry-password:
+    description: 'Registry password for private images'
+    required: false
+
+outputs:
+  vulnerabilities-found:
+    description: 'Number of vulnerabilities found'
+    value: ${{ steps.scan.outputs.vulnerabilities }}
+  critical-count:
+    description: 'Number of critical vulnerabilities'
+    value: ${{ steps.scan.outputs.critical }}
+  high-count:
+    description: 'Number of high severity vulnerabilities'
+    value: ${{ steps.scan.outputs.high }}
+  scan-report:
+    description: 'Path to the scan report'
+    value: ${{ steps.scan.outputs.report-path }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Trivy Scanner
+      shell: bash
+      run: |
+        echo "🔧 Installing Trivy security scanner..."
+        sudo apt-get update
+        sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+        echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install -y trivy
+
+    - name: Login to Registry
+      if: inputs.registry-username != '' && inputs.registry-password != ''
+      shell: bash
+      run: |
+        echo "🔐 Logging into container registry..."
+        echo "${{ inputs.registry-password }}" | docker login --username "${{ inputs.registry-username }}" --password-stdin
+
+    - name: Run Security Scan
+      id: scan
+      shell: bash
+      run: |
+        echo "🔍 Scanning container image: ${{ inputs.image }}"
+        
+        # Create reports directory
+        mkdir -p security-reports
+        
+        # Set report file paths
+        REPORT_FILE="security-reports/trivy-report.json"
+        TABLE_FILE="security-reports/trivy-table.txt"
+        SARIF_FILE="security-reports/trivy-report.sarif"
+        
+        # Run Trivy scan
+        echo "Running Trivy scan..."
+        trivy image \
+          --format json \
+          --output "$REPORT_FILE" \
+          --severity "${{ inputs.severity-threshold }},HIGH,CRITICAL" \
+          "${{ inputs.image }}"
+        
+        # Generate table format for human reading
+        trivy image \
+          --format table \
+          --output "$TABLE_FILE" \
+          --severity "${{ inputs.severity-threshold }},HIGH,CRITICAL" \
+          "${{ inputs.image }}"
+        
+        # Generate SARIF format for GitHub integration
+        trivy image \
+          --format sarif \
+          --output "$SARIF_FILE" \
+          --severity "${{ inputs.severity-threshold }},HIGH,CRITICAL" \
+          "${{ inputs.image }}"
+        
+        # Parse results
+        if [ -f "$REPORT_FILE" ]; then
+          # Count vulnerabilities by severity
+          TOTAL_VULNS=$(jq '[.Results[]?.Vulnerabilities[]?] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+          CRITICAL_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+          HIGH_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+          MEDIUM_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+          
+          echo "vulnerabilities=$TOTAL_VULNS" >> $GITHUB_OUTPUT
+          echo "critical=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+          echo "high=$HIGH_COUNT" >> $GITHUB_OUTPUT
+          echo "medium=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
+          echo "report-path=$REPORT_FILE" >> $GITHUB_OUTPUT
+          
+          echo "📊 Scan Results:"
+          echo "  - Total vulnerabilities: $TOTAL_VULNS"
+          echo "  - Critical: $CRITICAL_COUNT"
+          echo "  - High: $HIGH_COUNT"
+          echo "  - Medium: $MEDIUM_COUNT"
+          
+          # Display table results
+          if [ -f "$TABLE_FILE" ] && [ -s "$TABLE_FILE" ]; then
+            echo "📋 Vulnerability Summary:"
+            cat "$TABLE_FILE"
+          fi
+          
+          # Check if we should fail on critical vulnerabilities
+          if [ "${{ inputs.fail-on-critical }}" = "true" ] && [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "❌ Found $CRITICAL_COUNT critical vulnerabilities. Failing as requested."
+            exit 1
+          fi
+          
+          if [ "$TOTAL_VULNS" -eq 0 ]; then
+            echo "✅ No vulnerabilities found!"
+          else
+            echo "⚠️ Found $TOTAL_VULNS vulnerabilities"
+          fi
+        else
+          echo "❌ Scan report not generated"
+          echo "vulnerabilities=0" >> $GITHUB_OUTPUT
+          echo "critical=0" >> $GITHUB_OUTPUT
+          echo "high=0" >> $GITHUB_OUTPUT
+          echo "medium=0" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+    - name: Upload Scan Reports
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: container-security-scan-${{ github.run_id }}
+        path: security-reports/
+        retention-days: 30
+
+    - name: Upload SARIF Report
+      if: always() && hashFiles('security-reports/trivy-report.sarif') != ''
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: security-reports/trivy-report.sarif
+        category: container-security
+
+    - name: Generate Security Summary
+      shell: bash
+      run: |
+        echo "## 🔒 Container Security Scan Results" >> $GITHUB_STEP_SUMMARY
+        echo "- **Image**: \`${{ inputs.image }}\`" >> $GITHUB_STEP_SUMMARY
+        echo "- **Total Vulnerabilities**: ${{ steps.scan.outputs.vulnerabilities }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Critical**: ${{ steps.scan.outputs.critical }} 🚨" >> $GITHUB_STEP_SUMMARY
+        echo "- **High**: ${{ steps.scan.outputs.high }} ⚠️" >> $GITHUB_STEP_SUMMARY
+        echo "- **Medium**: ${{ steps.scan.outputs.medium }} ℹ️" >> $GITHUB_STEP_SUMMARY
+        echo "- **Severity Threshold**: ${{ inputs.severity-threshold }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Fail on Critical**: ${{ inputs.fail-on-critical == 'true' && '✅ Yes' || '❌ No' }}" >> $GITHUB_STEP_SUMMARY

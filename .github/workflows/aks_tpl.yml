@@ -1,0 +1,212 @@
+on:
+  workflow_call:
+    inputs:
+      java-version:
+        description: 'Java version to use'
+        required: false
+        type: string
+        default: '17'
+      maven-version:
+        description: 'Maven version to use'
+        required: false
+        type: string
+        default: '3.9'
+      app-name:
+        description: 'Application name'
+        required: true
+        type: string
+      dockerfile-path:
+        description: 'Path to Dockerfile'
+        required: false
+        type: string
+        default: './Dockerfile'
+      build-context:
+        description: 'Docker build context'
+        required: false
+        type: string
+        default: '.'
+      registry-url:
+        description: 'Container registry URL'
+        required: true
+        type: string
+
+      # Quality gates
+      coverage-threshold:
+        description: 'Minimum code coverage percentage'
+        required: false
+        type: number
+        default: 80
+      # Deployment
+      # deploy-to-staging:
+      #   description: 'Deploy to staging environment'
+      #   required: false
+      #   type: boolean
+      #   default: false
+      # deploy-to-production:
+      #   description: 'Deploy to production environment'
+      #   required: false
+      #   type: boolean
+      #   default: false
+      k8s-namespace:
+        description: 'Kubernetes namespace'
+        required: true
+        type: string
+
+    secrets:
+      registry-username:
+        description: 'Container registry username'
+        required: true
+      registry-password:
+        description: 'Container registry password'
+        required: true
+      # azure-credentials:
+      #   description: 'Azure credentials for deployment'
+      #   required: false
+      # k8s-config:
+      #   description: 'Kubernetes configuration'
+      #   required: false
+
+    outputs:
+      image-tag:
+        description: 'Built image tag'
+        value: ${{ jobs.build.outputs.image-tag }}
+      image-digest:
+        description: 'Image digest'
+        value: ${{ jobs.build.outputs.image-digest }}
+      # deployment-url:
+      #   description: 'Deployment URL'
+      #   value: ${{ jobs.deploy-production.outputs.url }}
+
+jobs:
+  # validation:
+  #   runs-on: ubuntu-latest
+  #   outputs: ${{ steps.actorTeams.outputs.teams }}
+  #   steps:
+  #     - name: Validate permissions
+  #       id: actorTeams
+  #       uses: tspascoal/get-user-teams-membership@v3
+  #       with:
+  #         username: ${{ github.actor }}
+  #         GITHUB_TOKEN: ${{ secrets.PAT }}
+
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    
+    outputs:
+      image-tag: ${{ steps.docker.outputs.full-image-url }}
+      image-digest: ${{ steps.docker.outputs.image-digest }}
+      semantic-version: ${{ steps.docker.outputs.semantic-version }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Tests
+        uses: ../actions/run-tests/maven@main
+        with:
+          maven-args: ${{ inputs.maven-args }}
+          coverage-threshold: ${{ inputs.coverage-threshold }}
+
+      - name: Build Application
+        uses: ../actions/build-app/maven@main
+        with:
+          app-name: ${{ inputs.app-name }}
+          maven-args: ${{ inputs.maven-args }}
+
+      - name: Build Docker Image
+        id: docker
+        uses: ../actions/build-docker-image@main
+        with:
+          app-name: ${{ inputs.app-name }}
+          registry-url: ${{ inputs.registry-url }}
+          image-name: ${{ inputs.app-name }}
+          dockerfile-path: ${{ inputs.dockerfile-path }}
+          build-context: ${{ inputs.build-context }}
+          registry-username: ${{ secrets.registry-username }}
+          registry-password: ${{ secrets.registry-password }}
+
+      - name: Container Security Scan
+        uses: ../actions/container-scan@main
+        with:
+          image: ${{ steps.docker.outputs.full-image-url }}
+
+      - name: Generate Build Summary
+        run: |
+          echo "## 🚀 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application**: ${{ inputs.app-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Semantic Version**: ${{ steps.docker.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: \`${{ steps.docker.outputs.full-image-url }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Digest**: \`${{ steps.docker.outputs.image-digest }}\`" >> $GITHUB_STEP_SUMMARY
+
+  sast_analysis:
+    name: SAST Analysis
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SAST Scan with CodeQL
+        uses: ../actions/sast-scanner/maven@main
+        with:
+          language: 'java-kotlin'
+          build-command: 'mvn clean compile -B'
+
+  # deploy-staging:
+  #   name: Deploy to Staging
+  #   if: inputs.deploy-to-staging && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   environment: staging
+    
+  #   steps:
+  #     - name: Deploy to Staging
+  #       uses: ../actions/deploy-k8s@main
+  #       with:
+  #         image-tag: ${{ needs.build.outputs.image-tag }}
+  #         namespace: ${{ inputs.k8s-namespace }}-staging
+  #         environment: staging
+  #         azure-credentials: ${{ secrets.azure-credentials }}
+  #         k8s-config: ${{ secrets.k8s-config }}
+
+  # deploy-production:
+  #   name: Deploy to Production
+  #   if: inputs.deploy-to-production && github.ref == 'refs/heads/main'
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   environment: production
+    
+  #   outputs:
+  #     url: ${{ steps.deploy.outputs.url }}
+    
+  #   steps:
+  #     - name: Deploy to Production
+  #       id: deploy
+  #       uses: ../actions/deploy-k8s@main
+  #       with:
+  #         image-tag: ${{ needs.build.outputs.image-tag }}
+  #         namespace: ${{ inputs.k8s-namespace }}-production
+  #         environment: production
+  #         azure-credentials: ${{ secrets.azure-credentials }}
+  #         k8s-config: ${{ secrets.k8s-config }}
+
+  # notify:
+  #   name: Notify Teams
+  #   if: always()
+  #   needs: [build, deploy-staging, deploy-production]
+  #   runs-on: ubuntu-latest
+    
+  #   steps:
+  #     - name: Notify Microsoft Teams
+  #       uses: ../actions/notify-teams@main
+  #       with:
+  #         status: ${{ job.status }}
+  #         app-name: ${{ inputs.app-name }}
+  #         image-tag: ${{ needs.build.outputs.image-tag }}
+  #         deployment-url: ${{ needs.deploy-production.outputs.url }}
