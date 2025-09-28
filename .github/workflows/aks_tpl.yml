@@ -30,7 +30,7 @@ on:
         description: 'Minimum code coverage percentage'
         required: false
         type: number
-        default: 40
+        default: 80
       # Deployment
       # deploy-to-staging:
       #   description: 'Deploy to staging environment'

@@ -182,20 +182,47 @@ runs:
           echo "🔍 First 10 lines of JaCoCo report:"
           head -10 target/site/jacoco/index.html
           
-          # Extract coverage percentage from HTML report
-          COVERAGE=$(grep -o 'Total[^<]*[0-9]*%' target/site/jacoco/index.html | head -1 | grep -o '[0-9]*%' | tr -d '%' || echo "0")
-          
-          # Alternative method using jacoco.csv if available
-          if [ "$COVERAGE" -eq "0" ] && [ -f "target/site/jacoco/jacoco.csv" ]; then
-            # Calculate coverage from CSV (instruction coverage)
-            COVERED=$(tail -n 1 target/site/jacoco/jacoco.csv | cut -d',' -f5)
-            MISSED=$(tail -n 1 target/site/jacoco/jacoco.csv | cut -d',' -f4)
-            if [ "$COVERED" != "" ] && [ "$MISSED" != "" ]; then
-              TOTAL=$((COVERED + MISSED))
-              if [ "$TOTAL" -gt 0 ]; then
-                COVERAGE=$((COVERED * 100 / TOTAL))
+          # Extract coverage percentage - Use CSV method as primary (more reliable)
+          if [ -f "target/site/jacoco/jacoco.csv" ]; then
+            echo "🔍 Using jacoco.csv for accurate coverage calculation..."
+            
+            # JaCoCo CSV format: GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+            # Sum all classes (skip header line)
+            TOTAL_MISSED=0
+            TOTAL_COVERED=0
+            
+            while IFS=',' read -r group package class missed covered rest; do
+              if [ "$missed" != "INSTRUCTION_MISSED" ] && [ "$missed" != "" ]; then
+                TOTAL_MISSED=$((TOTAL_MISSED + missed))
+                TOTAL_COVERED=$((TOTAL_COVERED + covered))
+                echo "📋 Class: $class - Missed: $missed, Covered: $covered"
               fi
+            done < target/site/jacoco/jacoco.csv
+            
+            if [ "$TOTAL_COVERED" -gt 0 ] || [ "$TOTAL_MISSED" -gt 0 ]; then
+              TOTAL_INSTRUCTIONS=$((TOTAL_COVERED + TOTAL_MISSED))
+              if [ "$TOTAL_INSTRUCTIONS" -gt 0 ]; then
+                COVERAGE=$((TOTAL_COVERED * 100 / TOTAL_INSTRUCTIONS))
+                echo "✅ Coverage calculated from CSV: $COVERAGE% (Total Covered: $TOTAL_COVERED, Total Missed: $TOTAL_MISSED, Total Instructions: $TOTAL_INSTRUCTIONS)"
+              else
+                COVERAGE=0
+                echo "⚠️ No instructions found in coverage data"
+              fi
+            else
+              echo "⚠️ No coverage data found in CSV"
+              COVERAGE=0
             fi
+          else
+            echo "⚠️ jacoco.csv not found"
+            COVERAGE=0
+          fi
+          
+          # Fallback: Try HTML parsing only if CSV failed
+          if [ "$COVERAGE" -eq 0 ] && [ -f "target/site/jacoco/index.html" ]; then
+            echo "🔍 Fallback: Trying HTML parsing..."
+            # Look specifically for the Total row in the footer
+            COVERAGE=$(grep -A1 '<tfoot>' target/site/jacoco/index.html | grep -o 'ctr2">[0-9]*%' | head -1 | grep -o '[0-9]*' || echo "0")
+            echo "📊 Coverage from HTML: $COVERAGE%"
           fi
           
           echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
