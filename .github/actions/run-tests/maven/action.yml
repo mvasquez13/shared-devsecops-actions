@@ -10,10 +10,6 @@ inputs:
     description: 'Minimum code coverage percentage'
     required: false
     default: '80'
-  maven-args:
-    description: 'Additional Maven arguments'
-    required: false
-    default: '-B'
   fail-on-threshold:
     description: 'Fail the action if coverage is below threshold'
     required: false
@@ -26,8 +22,6 @@ outputs:
   threshold-met:
     description: 'Whether coverage threshold was met'
     value: ${{ steps.coverage.outputs.threshold-met }}
-
-outputs:
   tests-passed:
     description: 'Number of Maven tests passed'
     value: ${{ steps.test.outputs.passed }}
