@@ -106,7 +106,6 @@ runs:
         tags: |
           ${{ steps.version.outputs.full-image-url }}
           ${{ inputs.image-name }}:latest
-          # ${{ inputs.registry-url }}/${{ inputs.image-name }}:latest
         labels: |
           org.opencontainers.image.title=${{ inputs.app-name }}
           org.opencontainers.image.version=${{ steps.version.outputs.semantic-version }}
