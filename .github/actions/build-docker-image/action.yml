@@ -5,9 +5,9 @@ inputs:
   app-name:
     description: 'Application name'
     required: true
-  registry-url:
-    description: 'Container registry URL'
-    required: true
+  # registry-url:
+  #   description: 'Container registry URL'
+  #   required: true
   image-name:
     description: 'Docker image name'
     required: true
@@ -77,7 +77,8 @@ runs:
         
         # Generate semantic version: version-date
         SEMANTIC_VERSION="${CLEAN_VERSION}-${DATE}"
-        FULL_IMAGE_URL="${{ inputs.registry-url }}/${{ inputs.image-name }}:${SEMANTIC_VERSION}"
+        FULL_IMAGE_URL="${{ inputs.image-name }}:${SEMANTIC_VERSION}"
+        # FULL_IMAGE_URL="${{ inputs.registry-url }}/${{ inputs.image-name }}:${SEMANTIC_VERSION}"
         
         echo "semantic-version=$SEMANTIC_VERSION" >> $GITHUB_OUTPUT
         echo "full-image-url=$FULL_IMAGE_URL" >> $GITHUB_OUTPUT
@@ -91,7 +92,7 @@ runs:
     - name: Log in to Container Registry
       uses: docker/login-action@v3
       with:
-        registry: ${{ inputs.registry-url }}
+        # registry: ${{ inputs.registry-url }}
         username: ${{ inputs.registry-username }}
         password: ${{ inputs.registry-password }}
 
@@ -104,7 +105,8 @@ runs:
         push: true
         tags: |
           ${{ steps.version.outputs.full-image-url }}
-          ${{ inputs.registry-url }}/${{ inputs.image-name }}:latest
+          ${{ inputs.image-name }}:latest
+          # ${{ inputs.registry-url }}/${{ inputs.image-name }}:latest
         labels: |
           org.opencontainers.image.title=${{ inputs.app-name }}
           org.opencontainers.image.version=${{ steps.version.outputs.semantic-version }}
@@ -120,7 +122,6 @@ runs:
         echo "## 🐳 Docker Image Build Summary" >> $GITHUB_STEP_SUMMARY
         echo "- **Application**: ${{ inputs.app-name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Semantic Version**: ${{ steps.version.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Registry**: ${{ inputs.registry-url }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Image Name**: ${{ inputs.image-name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Full Image URL**: \`${{ steps.version.outputs.full-image-url }}\`" >> $GITHUB_STEP_SUMMARY
         echo "- **Image Digest**: \`${{ steps.build.outputs.digest }}\`" >> $GITHUB_STEP_SUMMARY
@@ -132,5 +133,5 @@ runs:
         echo "### 🏷️ Generated Tags" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
         echo "${{ steps.version.outputs.full-image-url }}" >> $GITHUB_STEP_SUMMARY
-        echo "${{ inputs.registry-url }}/${{ inputs.image-name }}:latest" >> $GITHUB_STEP_SUMMARY
+        echo "${{ inputs.image-name }}:latest" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

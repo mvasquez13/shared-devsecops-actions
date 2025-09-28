@@ -25,11 +25,6 @@ on:
         required: false
         type: string
         default: '.'
-      registry-url:
-        description: 'Container registry URL'
-        required: true
-        type: string
-
       # Quality gates
       coverage-threshold:
         description: 'Minimum code coverage percentage'
@@ -121,7 +116,6 @@ jobs:
         uses: ../actions/build-docker-image@main
         with:
           app-name: ${{ inputs.app-name }}
-          registry-url: ${{ inputs.registry-url }}
           image-name: ${{ inputs.app-name }}
           dockerfile-path: ${{ inputs.dockerfile-path }}
           build-context: ${{ inputs.build-context }}
