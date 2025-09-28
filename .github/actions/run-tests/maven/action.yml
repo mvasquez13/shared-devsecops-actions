@@ -206,7 +206,7 @@ runs:
             echo "threshold-met=false" >> $GITHUB_OUTPUT
             
             # Calculate how much coverage is needed
-            NEEDED=$((${{{ inputs.coverage-threshold }}} - COVERAGE))
+            NEEDED=$((${{ inputs.coverage-threshold }} - COVERAGE))
             
             echo "⚠️ Coverage Warning: $COVERAGE% is below target of ${{ inputs.coverage-threshold }}%"
             echo "📈 Need $NEEDED% more coverage to meet the threshold"
