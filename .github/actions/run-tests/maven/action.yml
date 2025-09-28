@@ -53,9 +53,15 @@ runs:
       id: test
       shell: bash
       run: |
-        echo "🧪 Running Maven tests with JaCoCo coverage..."
-        # Run tests with JaCoCo agent active to capture coverage
-        mvn clean jacoco:prepare-agent test jacoco:report ${{ inputs.maven-args }}
+        echo "🧪 Running Maven tests (matching local script)..."
+        
+        # Step 1: Clean and run tests (JaCoCo agent is configured in pom.xml)
+        echo "🧪 Running unit tests..."
+        mvn clean test ${{ inputs.maven-args }} -B
+        
+        # Step 2: Generate coverage report explicitly
+        echo "📊 Generating coverage report..."
+        mvn jacoco:report ${{ inputs.maven-args }} -B
         
         # Extract test results from surefire reports
         if [ -d "target/surefire-reports" ]; then
@@ -129,13 +135,53 @@ runs:
           echo "Make sure Maven Surefire plugin is configured correctly." >> $GITHUB_STEP_SUMMARY
         fi
 
-    - name: Analyze JaCoCo Coverage Report
+    - name: Debug and Analyze JaCoCo Coverage Report
       id: coverage
       shell: bash
       run: |
         echo "📊 Analyzing JaCoCo coverage report..."
         
+        # Debug: List all files in target directory
+        echo "🔍 Debug: Listing target directory structure..."
+        if [ -d "target" ]; then
+          find target -name "*.exec" -o -name "*.html" -o -name "*.csv" -o -name "*.xml" | grep -i jacoco || echo "No JaCoCo files found"
+          
+          echo "📁 Target directory structure:"
+          ls -la target/ || echo "Target directory not found"
+          
+          if [ -d "target/site" ]; then
+            echo "📁 Target/site directory:"
+            ls -la target/site/ || echo "Site directory not found"
+            
+            if [ -d "target/site/jacoco" ]; then
+              echo "📁 JaCoCo directory contents:"
+              ls -la target/site/jacoco/
+            fi
+          fi
+        fi
+        
+        # Debug: Check if jacoco.exec was generated during tests
+        if [ -f "target/jacoco.exec" ]; then
+          EXEC_SIZE=$(stat -f%z "target/jacoco.exec" 2>/dev/null || stat -c%s "target/jacoco.exec" 2>/dev/null || echo "unknown")
+          echo "✅ jacoco.exec found with size: $EXEC_SIZE bytes"
+          
+          if [ "$EXEC_SIZE" -gt 0 ]; then
+            echo "✅ JaCoCo execution data captured during tests"
+          else
+            echo "⚠️ jacoco.exec is empty - JaCoCo agent may not have been active"
+          fi
+        else
+          echo "❌ jacoco.exec not found - JaCoCo agent was not active during test execution"
+          echo "💡 This suggests the JaCoCo Maven plugin prepare-agent goal was not executed"
+        fi
+        
         if [ -f "target/site/jacoco/index.html" ]; then
+          echo "✅ JaCoCo HTML report found"
+          
+          # Debug: Show first few lines of HTML report
+          echo "🔍 First 10 lines of JaCoCo report:"
+          head -10 target/site/jacoco/index.html
+          
           # Extract coverage percentage from HTML report
           COVERAGE=$(grep -o 'Total[^<]*[0-9]*%' target/site/jacoco/index.html | head -1 | grep -o '[0-9]*%' | tr -d '%' || echo "0")
           
@@ -158,23 +204,71 @@ runs:
           # Check coverage threshold
           if [ "$COVERAGE" -lt "${{ inputs.coverage-threshold }}" ]; then
             echo "threshold-met=false" >> $GITHUB_OUTPUT
-            echo "❌ Coverage ($COVERAGE%) below threshold (${{ inputs.coverage-threshold }}%)"
+            
+            # Calculate how much coverage is needed
+            NEEDED=$((${{{ inputs.coverage-threshold }}} - COVERAGE))
+            
+            echo "⚠️ Coverage Warning: $COVERAGE% is below target of ${{ inputs.coverage-threshold }}%"
+            echo "📈 Need $NEEDED% more coverage to meet the threshold"
+            
+            # Add detailed information to GitHub Step Summary
+            echo "## ⚠️ Code Coverage Below Threshold" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| 📊 Current Coverage | **$COVERAGE%** |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🎯 Target Threshold | **${{ inputs.coverage-threshold }}%** |" >> $GITHUB_STEP_SUMMARY
+            echo "| 📈 Gap | **$NEEDED%** |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 💡 Recommendations:" >> $GITHUB_STEP_SUMMARY
+            echo "- Add more unit tests to increase coverage" >> $GITHUB_STEP_SUMMARY
+            echo "- Focus on untested methods and branches" >> $GITHUB_STEP_SUMMARY
+            echo "- Review JaCoCo report for specific areas needing tests" >> $GITHUB_STEP_SUMMARY
             
             if [ "${{ inputs.fail-on-threshold }}" = "true" ]; then
+              echo "❌ Failing build due to coverage threshold not met"
               exit 1
+            else
+              echo "⚠️ Continuing build despite coverage threshold not met (fail-on-threshold=false)"
             fi
           else
             echo "threshold-met=true" >> $GITHUB_OUTPUT
+            EXCESS=$((COVERAGE - ${{ inputs.coverage-threshold }}))
             echo "✅ Coverage ($COVERAGE%) meets threshold (${{ inputs.coverage-threshold }}%)"
+            
+            # Add success information to GitHub Step Summary
+            echo "## ✅ Code Coverage Meets Threshold" >> $GITHUB_STEP_SUMMARY
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| 📊 Current Coverage | **$COVERAGE%** |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🎯 Target Threshold | **${{ inputs.coverage-threshold }}%** |" >> $GITHUB_STEP_SUMMARY
+            echo "| 🚀 Surplus | **+$EXCESS%** |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "🎉 **Great job!** Your code coverage exceeds the required threshold." >> $GITHUB_STEP_SUMMARY
           fi
         else
-          echo "⚠️ JaCoCo report not found at target/site/jacoco/index.html"
+          echo "❌ JaCoCo HTML report not found at target/site/jacoco/index.html"
           echo "percentage=0" >> $GITHUB_OUTPUT
           echo "threshold-met=false" >> $GITHUB_OUTPUT
+          
+          # Add debugging information to GitHub Step Summary
+          echo "## ❌ JaCoCo Coverage Report Not Found" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Debugging Information:" >> $GITHUB_STEP_SUMMARY
+          echo "- Expected location: \`target/site/jacoco/index.html\`" >> $GITHUB_STEP_SUMMARY
+          echo "- JaCoCo execution data: $([ -f 'target/jacoco.exec' ] && echo '✅ Found' || echo '❌ Missing')" >> $GITHUB_STEP_SUMMARY
+          echo "- Maven jacoco:report goal: Executed but may have failed silently" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 💡 Possible Solutions:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Verify JaCoCo plugin is properly configured in pom.xml" >> $GITHUB_STEP_SUMMARY
+          echo "2. Ensure prepare-agent goal runs before tests" >> $GITHUB_STEP_SUMMARY
+          echo "3. Check that tests actually execute code (not just empty tests)" >> $GITHUB_STEP_SUMMARY
+          echo "4. Review Maven build logs for JaCoCo errors" >> $GITHUB_STEP_SUMMARY
           
           if [ "${{ inputs.fail-on-threshold }}" = "true" ]; then
             echo "❌ No coverage report found and fail-on-threshold is enabled"
             exit 1
+          else
+            echo "⚠️ Continuing without coverage report (fail-on-threshold=false)"
           fi
         fi
 
