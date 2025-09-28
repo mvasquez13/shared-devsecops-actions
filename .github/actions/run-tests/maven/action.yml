@@ -49,12 +49,13 @@ runs:
         echo "☕ Installing Maven dependencies..."
         mvn dependency:resolve ${{ inputs.maven-args }} -q
 
-    - name: Run Maven Tests
+    - name: Run Maven Tests with JaCoCo
       id: test
       shell: bash
       run: |
-        echo "🧪 Running Maven tests..."
-        mvn clean test ${{ inputs.maven-args }}
+        echo "🧪 Running Maven tests with JaCoCo coverage..."
+        # Run tests with JaCoCo agent active to capture coverage
+        mvn clean jacoco:prepare-agent test jacoco:report ${{ inputs.maven-args }}
         
         # Extract test results from surefire reports
         if [ -d "target/surefire-reports" ]; then
@@ -128,15 +129,29 @@ runs:
           echo "Make sure Maven Surefire plugin is configured correctly." >> $GITHUB_STEP_SUMMARY
         fi
 
-    - name: Generate JaCoCo Coverage Report
+    - name: Analyze JaCoCo Coverage Report
       id: coverage
       shell: bash
       run: |
-        echo "📊 Generating JaCoCo coverage report..."
-        mvn jacoco:report ${{ inputs.maven-args }}
+        echo "📊 Analyzing JaCoCo coverage report..."
         
         if [ -f "target/site/jacoco/index.html" ]; then
+          # Extract coverage percentage from HTML report
           COVERAGE=$(grep -o 'Total[^<]*[0-9]*%' target/site/jacoco/index.html | head -1 | grep -o '[0-9]*%' | tr -d '%' || echo "0")
+          
+          # Alternative method using jacoco.csv if available
+          if [ "$COVERAGE" -eq "0" ] && [ -f "target/site/jacoco/jacoco.csv" ]; then
+            # Calculate coverage from CSV (instruction coverage)
+            COVERED=$(tail -n 1 target/site/jacoco/jacoco.csv | cut -d',' -f5)
+            MISSED=$(tail -n 1 target/site/jacoco/jacoco.csv | cut -d',' -f4)
+            if [ "$COVERED" != "" ] && [ "$MISSED" != "" ]; then
+              TOTAL=$((COVERED + MISSED))
+              if [ "$TOTAL" -gt 0 ]; then
+                COVERAGE=$((COVERED * 100 / TOTAL))
+              fi
+            fi
+          fi
+          
           echo "percentage=$COVERAGE" >> $GITHUB_OUTPUT
           echo "📊 JaCoCo code coverage: $COVERAGE%"
           
