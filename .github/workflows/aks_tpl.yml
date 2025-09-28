@@ -119,7 +119,7 @@ jobs:
           image-name: ${{ inputs.app-name }}
           dockerfile-path: ${{ inputs.dockerfile-path }}
           build-context: ${{ inputs.build-context }}
-          registry-username: ${{ secrets.registry-username }}
+          registry-username: ${{ secrets.registry-username }} 
           registry-password: ${{ secrets.registry-password }}
 
       - name: Container Security Scan
