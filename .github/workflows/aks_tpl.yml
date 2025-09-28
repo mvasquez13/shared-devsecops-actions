@@ -100,20 +100,20 @@ jobs:
           fetch-depth: 0
 
       - name: Run Tests
-        uses: ./.github/actions/run-tests
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/run-tests/maven@main
         with:
           maven-args: ${{ inputs.maven-args }}
           coverage-threshold: ${{ inputs.coverage-threshold }}
 
       - name: Build Application
-        uses: ./.github/actions/build-app
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/build-app/maven@main
         with:
           app-name: ${{ inputs.app-name }}
           maven-args: ${{ inputs.maven-args }}
 
       - name: Build Docker Image
         id: docker
-        uses: ./.github/actions/build-docker-image
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/build-docker-image@main
         with:
           app-name: ${{ inputs.app-name }}
           image-name: ${{ inputs.app-name }}
@@ -123,7 +123,7 @@ jobs:
           registry-password: ${{ secrets.registry-password }}
 
       - name: Container Security Scan
-        uses: ./.github/actions/container-scan
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/container-scan@main
         with:
           image: ${{ steps.docker.outputs.full-image-url }}
 
@@ -147,7 +147,7 @@ jobs:
           fetch-depth: 0
 
       - name: SAST Scan with CodeQL
-        uses: ./.github/actions/sast-scanner
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/sast-scanner@main
         with:
           language: 'java-kotlin'
           build-command: 'mvn clean compile -B'
@@ -161,7 +161,7 @@ jobs:
     
   #   steps:
   #     - name: Deploy to Staging
-  #       uses: ./.github/actions/deploy-k8s
+  #       uses: mvasquez13/shared-devsecops-actions/.github/actions/deploy-k8s@main
   #       with:
   #         image-tag: ${{ needs.build.outputs.image-tag }}
   #         namespace: ${{ inputs.k8s-namespace }}-staging
@@ -182,7 +182,7 @@ jobs:
   #   steps:
   #     - name: Deploy to Production
   #       id: deploy
-  #       uses: ./.github/actions/deploy-k8s
+  #       uses: mvasquez13/shared-devsecops-actions/.github/actions/deploy-k8s@main
   #       with:
   #         image-tag: ${{ needs.build.outputs.image-tag }}
   #         namespace: ${{ inputs.k8s-namespace }}-production
@@ -198,7 +198,7 @@ jobs:
     
   #   steps:
   #     - name: Notify Microsoft Teams
-  #       uses: ./.github/actions/notify-teams
+  #       uses: mvasquez13/shared-devsecops-actions/.github/actions/notify-teams@main
   #       with:
   #         status: ${{ job.status }}
   #         app-name: ${{ inputs.app-name }}
