@@ -100,20 +100,20 @@ jobs:
           fetch-depth: 0
 
       - name: Run Tests
-        uses: ../actions/run-tests/maven@main
+        uses: ./.github/actions/run-tests
         with:
           maven-args: ${{ inputs.maven-args }}
           coverage-threshold: ${{ inputs.coverage-threshold }}
 
       - name: Build Application
-        uses: ../actions/build-app/maven@main
+        uses: ./.github/actions/build-app
         with:
           app-name: ${{ inputs.app-name }}
           maven-args: ${{ inputs.maven-args }}
 
       - name: Build Docker Image
         id: docker
-        uses: ../actions/build-docker-image@main
+        uses: ./.github/actions/build-docker-image
         with:
           app-name: ${{ inputs.app-name }}
           image-name: ${{ inputs.app-name }}
@@ -123,7 +123,7 @@ jobs:
           registry-password: ${{ secrets.registry-password }}
 
       - name: Container Security Scan
-        uses: ../actions/container-scan@main
+        uses: ./.github/actions/container-scan
         with:
           image: ${{ steps.docker.outputs.full-image-url }}
 
@@ -147,7 +147,7 @@ jobs:
           fetch-depth: 0
 
       - name: SAST Scan with CodeQL
-        uses: ../actions/sast-scanner/maven@main
+        uses: ./.github/actions/sast-scanner
         with:
           language: 'java-kotlin'
           build-command: 'mvn clean compile -B'
@@ -161,7 +161,7 @@ jobs:
     
   #   steps:
   #     - name: Deploy to Staging
-  #       uses: ../actions/deploy-k8s@main
+  #       uses: ./.github/actions/deploy-k8s
   #       with:
   #         image-tag: ${{ needs.build.outputs.image-tag }}
   #         namespace: ${{ inputs.k8s-namespace }}-staging
@@ -182,7 +182,7 @@ jobs:
   #   steps:
   #     - name: Deploy to Production
   #       id: deploy
-  #       uses: ../actions/deploy-k8s@main
+  #       uses: ./.github/actions/deploy-k8s
   #       with:
   #         image-tag: ${{ needs.build.outputs.image-tag }}
   #         namespace: ${{ inputs.k8s-namespace }}-production
@@ -198,7 +198,7 @@ jobs:
     
   #   steps:
   #     - name: Notify Microsoft Teams
-  #       uses: ../actions/notify-teams@main
+  #       uses: ./.github/actions/notify-teams
   #       with:
   #         status: ${{ job.status }}
   #         app-name: ${{ inputs.app-name }}
