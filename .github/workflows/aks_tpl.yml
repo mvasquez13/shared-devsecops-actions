@@ -113,10 +113,11 @@ jobs:
       build-status: ${{ job.status }}
       code-coverage: ${{ steps.tests.outputs.coverage-percentage }}
       execution-time: ${{ steps.timing.outputs.duration }}
-      container-critical: ${{ steps.container-scan.outputs.critical-vulnerabilities }}
-      container-high: ${{ steps.container-scan.outputs.high-vulnerabilities }}
-      container-medium: ${{ steps.container-scan.outputs.medium-vulnerabilities }}
-      container-low: ${{ steps.container-scan.outputs.low-vulnerabilities }}
+      container-critical: ${{ steps.container-scan.outputs.critical }}
+      container-high: ${{ steps.container-scan.outputs.high }}
+      container-medium: ${{ steps.container-scan.outputs.medium }}
+      container-low: ${{ steps.container-scan.outputs.low }}
+      container-total: ${{ steps.container-scan.outputs.vulnerabilities }}
     
     steps:
       - name: Checkout code
@@ -162,11 +163,11 @@ jobs:
       - name: Debug Container Scan Outputs
         run: |
           echo "🔍 Container Scan Debug - Outputs generated:"
-          echo "  Critical: '${{ steps.container-scan.outputs.critical-vulnerabilities }}'"
-          echo "  High: '${{ steps.container-scan.outputs.high-vulnerabilities }}'"
-          echo "  Medium: '${{ steps.container-scan.outputs.medium-vulnerabilities }}'"
-          echo "  Low: '${{ steps.container-scan.outputs.low-vulnerabilities }}'"
-          echo "  Total: '${{ steps.container-scan.outputs.total-vulnerabilities }}'"
+          echo "  Critical: '${{ steps.container-scan.outputs.critical }}'"
+          echo "  High: '${{ steps.container-scan.outputs.high }}'"
+          echo "  Medium: '${{ steps.container-scan.outputs.medium }}'"
+          echo "  Low: '${{ steps.container-scan.outputs.low }}'"
+          echo "  Total: '${{ steps.container-scan.outputs.vulnerabilities }}'"
 
       - name: Generate Build Summary
         run: |
@@ -178,10 +179,11 @@ jobs:
           echo "- **Digest**: \`${{ steps.docker.outputs.image-digest }}\`" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔒 Container Security Scan Results" >> $GITHUB_STEP_SUMMARY
-          echo "- **Critical**: ${{ steps.container-scan.outputs.critical-vulnerabilities || 0 }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **High**: ${{ steps.container-scan.outputs.high-vulnerabilities || 0 }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Medium**: ${{ steps.container-scan.outputs.medium-vulnerabilities || 0 }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Low**: ${{ steps.container-scan.outputs.low-vulnerabilities || 0 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Critical**: ${{ steps.container-scan.outputs.critical || 0 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **High**: ${{ steps.container-scan.outputs.high || 0 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Medium**: ${{ steps.container-scan.outputs.medium || 0 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Low**: ${{ steps.container-scan.outputs.low || 0 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total**: ${{ steps.container-scan.outputs.vulnerabilities || 0 }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Calculate Execution Time
         id: timing

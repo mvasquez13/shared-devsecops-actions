@@ -32,6 +32,12 @@ outputs:
   high-count:
     description: 'Number of high severity vulnerabilities'
     value: ${{ steps.scan.outputs.high }}
+  medium-count:
+    description: 'Number of medium severity vulnerabilities'
+    value: ${{ steps.scan.outputs.medium }}
+  low-count:
+    description: 'Number of low severity vulnerabilities'
+    value: ${{ steps.scan.outputs.low }}
   scan-report:
     description: 'Path to the scan report'
     value: ${{ steps.scan.outputs.report-path }}
@@ -71,12 +77,12 @@ runs:
         TABLE_FILE="security-reports/trivy-table.txt"
         SARIF_FILE="security-reports/trivy-report.sarif"
         
-        # Run Trivy scan
+        # Run Trivy scan for all severities to get complete picture
         echo "Running Trivy scan..."
         trivy image \
           --format json \
           --output "$REPORT_FILE" \
-          --severity "${{ inputs.severity-threshold }},HIGH,CRITICAL" \
+          --severity "LOW,MEDIUM,HIGH,CRITICAL" \
           "${{ inputs.image }}"
         
         # Generate table format for human reading
@@ -100,11 +106,13 @@ runs:
           CRITICAL_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
           HIGH_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
           MEDIUM_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="MEDIUM")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
+          LOW_COUNT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="LOW")] | length' "$REPORT_FILE" 2>/dev/null || echo "0")
           
           echo "vulnerabilities=$TOTAL_VULNS" >> $GITHUB_OUTPUT
           echo "critical=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
           echo "high=$HIGH_COUNT" >> $GITHUB_OUTPUT
           echo "medium=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
+          echo "low=$LOW_COUNT" >> $GITHUB_OUTPUT
           echo "report-path=$REPORT_FILE" >> $GITHUB_OUTPUT
           
           echo "📊 Scan Results:"
@@ -112,6 +120,7 @@ runs:
           echo "  - Critical: $CRITICAL_COUNT"
           echo "  - High: $HIGH_COUNT"
           echo "  - Medium: $MEDIUM_COUNT"
+          echo "  - Low: $LOW_COUNT"
           
           # Display table results
           if [ -f "$TABLE_FILE" ] && [ -s "$TABLE_FILE" ]; then
@@ -160,6 +169,7 @@ runs:
           echo "critical=0" >> $GITHUB_OUTPUT
           echo "high=0" >> $GITHUB_OUTPUT
           echo "medium=0" >> $GITHUB_OUTPUT
+          echo "low=0" >> $GITHUB_OUTPUT
           exit 1
         fi
 
@@ -187,5 +197,6 @@ runs:
         echo "- **Critical**: ${{ steps.scan.outputs.critical }} 🚨" >> $GITHUB_STEP_SUMMARY
         echo "- **High**: ${{ steps.scan.outputs.high }} ⚠️" >> $GITHUB_STEP_SUMMARY
         echo "- **Medium**: ${{ steps.scan.outputs.medium }} ℹ️" >> $GITHUB_STEP_SUMMARY
+        echo "- **Low**: ${{ steps.scan.outputs.low }} 🔵" >> $GITHUB_STEP_SUMMARY
         echo "- **Severity Threshold**: ${{ inputs.severity-threshold }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Fail on Critical**: ${{ inputs.fail-on-critical == 'auto' && '🤖 Auto-detected based on branch' || (inputs.fail-on-critical == 'true' && '🔒 Strict' || '🧪 Permissive') }}" >> $GITHUB_STEP_SUMMARY
