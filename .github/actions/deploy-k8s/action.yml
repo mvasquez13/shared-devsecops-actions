@@ -1,339 +1,149 @@
-name: 'Deploy to Kubernetes'
-description: 'Deploy application to Kubernetes cluster with security best practices'
+name: 'Deploy to Kubernetes using Template'
+description: 'Deploy application to AKS using the generate-manifest.sh script'
 
 inputs:
   registry:
     description: 'Container registry URL'
     required: true
+    default: 'myregistry.azurecr.io'
   image-name:
     description: 'Docker image name'
     required: true
   image-tag:
     description: 'Docker image tag'
     required: true
-  kubeconfig:
-    description: 'Kubernetes configuration'
-    required: true
-  namespace:
-    description: 'Kubernetes namespace'
-    required: false
-    default: 'default'
   app-name:
     description: 'Application name'
     required: true
-  app-port:
-    description: 'Application port'
+  namespace:
+    description: 'Kubernetes namespace'
+    required: true
+  kubeconfig:
+    description: 'Kubernetes configuration (base64 encoded)'
     required: false
-    default: '8080'
+  azure-credentials:
+    description: 'Azure service principal credentials (JSON)'
+    required: false
+  cluster-name:
+    description: 'AKS cluster name'
+    required: false
+  resource-group:
+    description: 'Azure resource group'
+    required: false
+  manifests-path:
+    description: 'Path to Kubernetes manifests directory'
+    required: false
+    default: './k8s-manifests'
   replicas:
     description: 'Number of replicas'
     required: false
     default: '2'
-  ingress-enabled:
-    description: 'Enable ingress'
+  environment:
+    description: 'Environment (dev, staging, prod)'
     required: false
-    default: 'false'
+    default: 'dev'
   ingress-host:
     description: 'Ingress hostname'
     required: false
-  health-check-path:
-    description: 'Health check endpoint'
+    default: 'app.local'
+  registry-username:
+    description: 'Container registry username'
     required: false
-    default: '/actuator/health'
+  registry-password:
+    description: 'Container registry password'
+    required: false
 
 outputs:
   deployment-url:
     description: 'Deployment URL'
     value: ${{ steps.deploy.outputs.url }}
-  service-ip:
-    description: 'Service external IP'
-    value: ${{ steps.deploy.outputs.service-ip }}
+  manifest-file:
+    description: 'Generated manifest file path'
+    value: ${{ steps.generate.outputs.manifest-file }}
 
 runs:
   using: 'composite'
   steps:
-    - name: Setup Kubernetes
-      shell: bash
-      run: |
-        echo "☸️ Setting up Kubernetes deployment..."
-        
-        # Setup kubectl
-        curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-        chmod +x kubectl
-        sudo mv kubectl /usr/local/bin/
-        
-        # Setup kubeconfig
-        mkdir -p ~/.kube
-        echo '${{ inputs.kubeconfig }}' | base64 -d > ~/.kube/config
-        chmod 600 ~/.kube/config
-        
-        # Verify connection
-        kubectl cluster-info
-        
-        echo "✅ Kubernetes setup completed"
+    # - name: Setup Prerequisites
+    #   shell: bash
+    #   run: |
+    #     echo "🔧 Setting up prerequisites..."
+    #     curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+    #     chmod +x kubectl
+    #     sudo mv kubectl /usr/local/bin/
+    #     if [ -n "${{ inputs.azure-credentials }}" ]; then
+    #       curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+    #     fi
 
-    - name: Create Namespace
-      shell: bash
-      run: |
-        echo "📁 Creating namespace: ${{ inputs.namespace }}"
-        
-        # Create namespace if it doesn't exist
-        kubectl create namespace ${{ inputs.namespace }} --dry-run=client -o yaml | kubectl apply -f -
-        
-        # Set as default namespace for subsequent commands
-        kubectl config set-context --current --namespace=${{ inputs.namespace }}
+    # - name: Authenticate to Cluster
+    #   shell: bash
+    #   run: |
+    #     echo "🔐 Authenticating to cluster..."
+    #     mkdir -p ~/.kube
+    #     if [ -n "${{ inputs.kubeconfig }}" ]; then
+    #       echo '${{ inputs.kubeconfig }}' | base64 -d > ~/.kube/config
+    #     elif [ -n "${{ inputs.azure-credentials }}" ]; then
+    #       echo '${{ inputs.azure-credentials }}' > azure-creds.json
+    #       az login --service-principal \
+    #         --username $(jq -r .clientId azure-creds.json) \
+    #         --password $(jq -r .clientSecret azure-creds.json) \
+    #         --tenant $(jq -r .tenantId azure-creds.json)
+    #       az aks get-credentials \
+    #         --resource-group "${{ inputs.resource-group }}" \
+    #         --name "${{ inputs.cluster-name }}" \
+    #         --overwrite-existing
+    #       rm azure-creds.json
+    #     fi
+    #     chmod 600 ~/.kube/config
 
-    - name: Generate Kubernetes Manifests
+    - name: Generate Manifests from Template
+      id: generate
       shell: bash
       run: |
-        echo "📝 Generating Kubernetes manifests..."
+        echo "📝 Generating manifests from template..."
+        ACTION_DIR="${{ github.action_path }}"
+        cd "$ACTION_DIR"
+        chmod +x generate-manifest.sh
         
-        mkdir -p k8s-manifests
+        MANIFEST_DIR="${GITHUB_WORKSPACE}/${{ inputs.manifests-path }}"
+        mkdir -p "$MANIFEST_DIR"
         
-        # Generate Deployment
-        cat > k8s-manifests/deployment.yaml << EOF
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: ${{ inputs.app-name }}
-  namespace: ${{ inputs.namespace }}
-  labels:
-    app: ${{ inputs.app-name }}
-    version: "${{ inputs.image-tag }}"
-spec:
-  replicas: ${{ inputs.replicas }}
-  selector:
-    matchLabels:
-      app: ${{ inputs.app-name }}
-  template:
-    metadata:
-      labels:
-        app: ${{ inputs.app-name }}
-        version: "${{ inputs.image-tag }}"
-    spec:
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 1000
-        fsGroup: 1000
-      containers:
-      - name: ${{ inputs.app-name }}
-        image: ${{ inputs.registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}
-        ports:
-        - containerPort: ${{ inputs.app-port }}
-          name: http
-        env:
-        - name: JAVA_OPTS
-          value: "-Xmx512m -Xms256m"
-        - name: SPRING_PROFILES_ACTIVE
-          value: "prod"
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "200m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
-          capabilities:
-            drop:
-            - ALL
-        livenessProbe:
-          httpGet:
-            path: ${{ inputs.health-check-path }}
-            port: ${{ inputs.app-port }}
-          initialDelaySeconds: 60
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
-        readinessProbe:
-          httpGet:
-            path: ${{ inputs.health-check-path }}
-            port: ${{ inputs.app-port }}
-          initialDelaySeconds: 30
-          periodSeconds: 5
-          timeoutSeconds: 3
-          failureThreshold: 3
-        volumeMounts:
-        - name: tmp
-          mountPath: /tmp
-      volumes:
-      - name: tmp
-        emptyDir: {}
-      imagePullSecrets:
-      - name: registry-secret
-EOF
+        ./generate-manifest.sh \
+          --app-name "${{ inputs.app-name }}" \
+          --namespace "${{ inputs.namespace }}" \
+          --registry "${{ inputs.registry }}" \
+          --tag "${{ inputs.image-tag }}" \
+          --replicas "${{ inputs.replicas }}" \
+          --environment "${{ inputs.environment }}" \
+          --ingress-host "${{ inputs.ingress-host }}" \
+          --template-file "maven-manifest.yml" \
+          --output-file "$MANIFEST_DIR/deployment.yml"
         
-        # Generate Service
-        cat > k8s-manifests/service.yaml << EOF
-apiVersion: v1
-kind: Service
-metadata:
-  name: ${{ inputs.app-name }}
-  namespace: ${{ inputs.namespace }}
-  labels:
-    app: ${{ inputs.app-name }}
-spec:
-  type: ClusterIP
-  ports:
-  - port: 80
-    targetPort: ${{ inputs.app-port }}
-    name: http
-  selector:
-    app: ${{ inputs.app-name }}
-EOF
-        
-        # Generate Ingress if enabled
-        if [ "${{ inputs.ingress-enabled }}" = "true" ]; then
-          cat > k8s-manifests/ingress.yaml << EOF
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: ${{ inputs.app-name }}
-  namespace: ${{ inputs.namespace }}
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-spec:
-  tls:
-  - hosts:
-    - ${{ inputs.ingress-host }}
-    secretName: ${{ inputs.app-name }}-tls
-  rules:
-  - host: ${{ inputs.ingress-host }}
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: ${{ inputs.app-name }}
-            port:
-              number: 80
-EOF
-        fi
-        
-        # Generate NetworkPolicy
-        cat > k8s-manifests/network-policy.yaml << EOF
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: ${{ inputs.app-name }}
-  namespace: ${{ inputs.namespace }}
-spec:
-  podSelector:
-    matchLabels:
-      app: ${{ inputs.app-name }}
-  policyTypes:
-  - Ingress
-  - Egress
-  ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          name: nginx-ingress
-    ports:
-    - protocol: TCP
-      port: ${{ inputs.app-port }}
-  egress:
-  - to: []
-    ports:
-    - protocol: TCP
-      port: 53
-    - protocol: UDP
-      port: 53
-  - to: []
-    ports:
-    - protocol: TCP
-      port: 443
-    - protocol: TCP
-      port: 80
-EOF
+        echo "manifest-file=$MANIFEST_DIR/deployment.yml" >> $GITHUB_OUTPUT
+        echo "✅ Manifest generated successfully"
 
-    - name: Deploy to Kubernetes
-      id: deploy
-      shell: bash
-      run: |
-        echo "🚀 Deploying to Kubernetes..."
+    # - name: Deploy to Kubernetes
+    #   id: deploy
+    #   shell: bash
+    #   run: |
+    #     echo "🚀 Deploying to Kubernetes..."
+    #     MANIFEST_FILE="${{ steps.generate.outputs.manifest-file }}"
+    #     kubectl apply -f "$MANIFEST_FILE"
         
-        # Apply manifests
-        kubectl apply -f k8s-manifests/
+    #     kubectl rollout status deployment/${{ inputs.app-name }} --namespace=${{ inputs.namespace }} --timeout=300s
         
-        # Wait for deployment to be ready
-        echo "⏳ Waiting for deployment to be ready..."
-        kubectl rollout status deployment/${{ inputs.app-name }} --timeout=300s
+    #     SERVICE_NAME="${{ inputs.app-name }}-service"
+    #     SERVICE_IP=$(kubectl get service "$SERVICE_NAME" --namespace=${{ inputs.namespace }} -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+    #     DEPLOYMENT_URL="http://$SERVICE_IP"
         
-        # Get service information
-        SERVICE_IP=$(kubectl get service ${{ inputs.app-name }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "")
-        if [ -z "$SERVICE_IP" ]; then
-          SERVICE_IP=$(kubectl get service ${{ inputs.app-name }} -o jsonpath='{.spec.clusterIP}')
-        fi
-        
-        echo "service-ip=$SERVICE_IP" >> $GITHUB_OUTPUT
-        
-        # Determine deployment URL
-        if [ "${{ inputs.ingress-enabled }}" = "true" ]; then
-          DEPLOYMENT_URL="https://${{ inputs.ingress-host }}"
-        else
-          DEPLOYMENT_URL="http://$SERVICE_IP"
-        fi
-        
-        echo "url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
-        
-        echo "✅ Deployment completed successfully!"
-        echo "🔗 Application URL: $DEPLOYMENT_URL"
-
-    - name: Run Health Check
-      shell: bash
-      run: |
-        echo "🏥 Running health check..."
-        
-        # Get pod name
-        POD_NAME=$(kubectl get pods -l app=${{ inputs.app-name }} -o jsonpath='{.items[0].metadata.name}')
-        echo "Testing health check on pod: $POD_NAME"
-        
-        # Port forward and test
-        kubectl port-forward $POD_NAME 8080:${{ inputs.app-port }} &
-        PF_PID=$!
-        
-        # Wait a moment for port forward to establish
-        sleep 5
-        
-        # Test health endpoint
-        HEALTH_STATUS=$(curl -f -s http://localhost:8080${{ inputs.health-check-path }} || echo "FAILED")
-        
-        # Cleanup
-        kill $PF_PID 2>/dev/null || true
-        
-        if [ "$HEALTH_STATUS" = "FAILED" ]; then
-          echo "❌ Health check failed"
-          exit 1
-        else
-          echo "✅ Health check passed"
-          echo "Response: $HEALTH_STATUS"
-        fi
+    #     echo "url=$DEPLOYMENT_URL" >> $GITHUB_OUTPUT
+    #     echo "✅ Deployment completed: $DEPLOYMENT_URL"
 
     - name: Deployment Summary
       shell: bash
       run: |
-        echo "📊 Deployment Summary"
-        
-        # Get deployment status
-        kubectl get deployment ${{ inputs.app-name }} -o wide
-        kubectl get pods -l app=${{ inputs.app-name }}
-        kubectl get service ${{ inputs.app-name }}
-        
-        if [ "${{ inputs.ingress-enabled }}" = "true" ]; then
-          kubectl get ingress ${{ inputs.app-name }}
-        fi
-        
         echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
-        echo "- **Application**: ${{ inputs.app-name }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **App**: ${{ inputs.app-name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Namespace**: ${{ inputs.namespace }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Image**: ${{ inputs.registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Replicas**: ${{ inputs.replicas }}" >> $GITHUB_STEP_SUMMARY
         echo "- **URL**: ${{ steps.deploy.outputs.url }}" >> $GITHUB_STEP_SUMMARY
-        
-        echo "🎉 Kubernetes deployment completed successfully!"

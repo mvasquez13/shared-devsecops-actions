@@ -72,9 +72,9 @@ on:
       grafana-api-key:
         description: 'Grafana Cloud API key'
         required: false
-      # azure-credentials:
-      #   description: 'Azure credentials for deployment'
-      #   required: false
+      azure-credentials:
+        description: 'Azure credentials for deployment'
+        required: false
       # k8s-config:
       #   description: 'Kubernetes configuration'
       #   required: false
@@ -272,25 +272,34 @@ jobs:
           echo "  Low: '${{ steps.sca.outputs.low-vulnerabilities }}'"
           echo "  Total: '${{ steps.sca.outputs.total-vulnerabilities }}'"
 
-  # deploy:
-  #   name: Deploy
-  #   needs: build
-  #   runs-on: ubuntu-latest
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
     
-  #   steps:
-  #     - name: Deploy
-  #       uses: mvasquez13/shared-devsecops-actions/.github/actions/deploy-k8s@main
-  #       with:
-  #         image-tag: ${{ needs.build.outputs.image-tag }}
-  #         namespace: ${{ inputs.k8s-namespace }}-staging
-  #         environment: staging
-  #         azure-credentials: ${{ secrets.azure-credentials }}
-  #         k8s-config: ${{ secrets.k8s-config }}
-
+    steps:
+      - name: Deploy
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/deploy-k8s@main
+        with:
+          app-name: '${{ inputs.app-name }}'
+          namespace: ${{ inputs.k8s-namespace }}
+          replicas: '2'
+          azure-credentials: ${{ secrets.azure-credentials }}
+          cluster-name: 'aks-prod'
+          resource-group: 'rg-prod'
+  
+  dast_analysis:
+    name: Deploy
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: DAST
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/dast-scanner@main
+    
   notify:
     name: Notify Grafana Cloud
     if: always() && inputs.enable-grafana-metrics
-    needs: [build, sast_analysis, sca_analysis]
+    needs: [build, sast_analysis, sca_analysis, dast_analysis]
     runs-on: ubuntu-latest
     
     steps:
