@@ -183,7 +183,6 @@ runs:
       with:
         sarif_file: security-reports/trivy-report.sarif
         category: container-security
-        token: ${{ inputs.github-token }}
 
     - name: Generate Security Summary
       shell: bash
