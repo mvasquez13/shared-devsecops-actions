@@ -76,6 +76,9 @@ on:
       #   description: 'Deployment URL'
       #   value: ${{ jobs.deploy-production.outputs.url }}
 
+permissions:
+  security-events: write
+
 jobs:
   # validation:
   #   runs-on: ubuntu-latest
