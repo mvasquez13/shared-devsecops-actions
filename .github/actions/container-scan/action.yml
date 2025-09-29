@@ -171,12 +171,12 @@ runs:
         path: security-reports/
         retention-days: 30
 
-    # - name: Upload SARIF Report
-    #   if: always() && hashFiles('security-reports/trivy-report.sarif') != ''
-    #   uses: github/codeql-action/upload-sarif@v3
-    #   with:
-    #     sarif_file: security-reports/trivy-report.sarif
-    #     category: container-security
+    - name: Upload SARIF Report
+      if: always() && hashFiles('security-reports/trivy-report.sarif') != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: security-reports/trivy-report.sarif
+        category: container-security
 
     - name: Generate Security Summary
       shell: bash
