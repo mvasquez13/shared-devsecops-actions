@@ -87,10 +87,19 @@ runs:
         
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
           echo "� Found SARIF file: $SARIF_FILE"
-          
+          cat $SARIF_FILE
           # Debug: Show SARIF structure first
-          echo "🔍 SARIF structure analysis:"
-          jq '.runs[].results[0:2] | .[] | {ruleId: .ruleId, level: .level, kind: .kind, severity: (.properties.severity // "N/A")}' "$SARIF_FILE" 2>/dev/null || echo "Could not analyze SARIF structure"
+          echo "🔍 Full SARIF structure analysis:"
+          echo "📊 Sample result structure:"
+          jq '.runs[].results[0] | keys' "$SARIF_FILE" 2>/dev/null || echo "Could not get result keys"
+          echo "📊 Sample rule structure:"
+          jq '.runs[].tool.driver.rules[0] | keys' "$SARIF_FILE" 2>/dev/null || echo "Could not get rule keys"
+          echo "📊 First few results:"
+          jq '.runs[].results[0:2] | .[] | {ruleId: .ruleId, level: .level, kind: .kind, properties: .properties}' "$SARIF_FILE" 2>/dev/null || echo "Could not analyze basic structure"
+          
+          # Look for severity in rules section (CodeQL often stores it there)
+          echo "📊 Rule severity mapping:"
+          jq '.runs[].tool.driver.rules[] | {id: .id, defaultLevel: (.properties."problem.severity" // .properties.severity // .level // "unknown")}' "$SARIF_FILE" 2>/dev/null | head -5 || echo "Could not get rule severities"
           
           # Count total results
           TOTAL_RESULTS=$(jq '[.runs[].results] | add | length' "$SARIF_FILE" 2>/dev/null || echo "0")
@@ -101,10 +110,46 @@ runs:
           NOTE_COUNT=$(jq '[.runs[].results[] | select(.level == "note")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
           INFO_COUNT=$(jq '[.runs[].results[] | select(.level == "info")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
           
-          # Also check for severity in properties (CodeQL sometimes uses this)
-          HIGH_SEVERITY=$(jq '[.runs[].results[] | select(.properties.severity == "high")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
-          MEDIUM_SEVERITY=$(jq '[.runs[].results[] | select(.properties.severity == "medium")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
-          LOW_SEVERITY=$(jq '[.runs[].results[] | select(.properties.severity == "low")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          # Build rule severity map and count by severity
+          # Create a map of ruleId to severity from the rules section
+          HIGH_SEVERITY=0
+          MEDIUM_SEVERITY=0
+          LOW_SEVERITY=0
+          
+          # Method 1: Direct severity from result properties
+          HIGH_SEVERITY_DIRECT=$(jq '[.runs[].results[] | select(.properties.severity == "high" or .properties."problem.severity" == "high")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          MEDIUM_SEVERITY_DIRECT=$(jq '[.runs[].results[] | select(.properties.severity == "medium" or .properties."problem.severity" == "medium")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          LOW_SEVERITY_DIRECT=$(jq '[.runs[].results[] | select(.properties.severity == "low" or .properties."problem.severity" == "low")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          
+          # Method 2: Map from rules to results
+          HIGH_SEVERITY_RULES=$(jq '
+            [
+              .runs[] as $run |
+              ($run.tool.driver.rules | map(select((.properties."problem.severity" // .properties.severity // .level) == "high") | .id)) as $highRules |
+              $run.results[] | 
+              select(.ruleId as $rid | $highRules | index($rid))
+            ] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          
+          MEDIUM_SEVERITY_RULES=$(jq '
+            [
+              .runs[] as $run |
+              ($run.tool.driver.rules | map(select((.properties."problem.severity" // .properties.severity // .level) == "medium") | .id)) as $mediumRules |
+              $run.results[] | 
+              select(.ruleId as $rid | $mediumRules | index($rid))
+            ] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          
+          LOW_SEVERITY_RULES=$(jq '
+            [
+              .runs[] as $run |
+              ($run.tool.driver.rules | map(select((.properties."problem.severity" // .properties.severity // .level) == "low") | .id)) as $lowRules |
+              $run.results[] | 
+              select(.ruleId as $rid | $lowRules | index($rid))
+            ] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          
+          # Use the maximum of both methods
+          HIGH_SEVERITY=$((HIGH_SEVERITY_DIRECT > HIGH_SEVERITY_RULES ? HIGH_SEVERITY_DIRECT : HIGH_SEVERITY_RULES))
+          MEDIUM_SEVERITY=$((MEDIUM_SEVERITY_DIRECT > MEDIUM_SEVERITY_RULES ? MEDIUM_SEVERITY_DIRECT : MEDIUM_SEVERITY_RULES))
+          LOW_SEVERITY=$((LOW_SEVERITY_DIRECT > LOW_SEVERITY_RULES ? LOW_SEVERITY_DIRECT : LOW_SEVERITY_RULES))
           
           # Set outputs
           echo "count=$TOTAL_RESULTS" >> $GITHUB_OUTPUT
@@ -121,23 +166,30 @@ runs:
           echo "  - Critical/Error: $ERROR_COUNT"
           echo "  - Warning: $WARNING_COUNT" 
           echo "  - Note/Info: $((NOTE_COUNT + INFO_COUNT))"
-          echo "  - High Severity: $HIGH_SEVERITY"
-          echo "  - Medium Severity: $MEDIUM_SEVERITY"
-          echo "  - Low Severity: $LOW_SEVERITY"
+          echo "  - High Severity: $HIGH_SEVERITY (Direct: $HIGH_SEVERITY_DIRECT, Rules: $HIGH_SEVERITY_RULES)"
+          echo "  - Medium Severity: $MEDIUM_SEVERITY (Direct: $MEDIUM_SEVERITY_DIRECT, Rules: $MEDIUM_SEVERITY_RULES)"
+          echo "  - Low Severity: $LOW_SEVERITY (Direct: $LOW_SEVERITY_DIRECT, Rules: $LOW_SEVERITY_RULES)"
           
-          # Show detailed breakdown of all issues
+          # Show detailed breakdown of all issues with rule lookup
           if [ "$TOTAL_RESULTS" -gt 0 ]; then
             echo ""
             echo "📋 Detailed Issues Found:"
-            jq -r '.runs[].results[] | "- [\(.level)] \(.ruleId): \(.message.text) (Severity: \(.properties.severity // "N/A"))"' "$SARIF_FILE" 2>/dev/null || echo "Could not parse issue details"
+            jq -r '
+              .runs[] as $run |
+              ($run.tool.driver.rules | map({key: .id, value: (.properties."problem.severity" // .properties.severity // .level // "unknown")}) | from_entries) as $ruleSeverities |
+              $run.results[] | 
+              "- [\(.level // "null")] \(.ruleId): \(.message.text) (Rule Severity: \($ruleSeverities[.ruleId] // "N/A"))"
+            ' "$SARIF_FILE" 2>/dev/null || echo "Could not parse issue details"
           fi
           
-          # Debug: Show unique levels and severities found
+          # Debug: Show unique levels and severities found  
           echo ""
-          echo "🔧 Debug - Unique levels found:"
-          jq -r '.runs[].results[] | .level' "$SARIF_FILE" 2>/dev/null | sort | uniq -c || echo "Could not extract levels"
-          echo "🔧 Debug - Unique severities found:"
-          jq -r '.runs[].results[] | .properties.severity // "none"' "$SARIF_FILE" 2>/dev/null | sort | uniq -c || echo "Could not extract severities"
+          echo "🔧 Debug - Unique levels found in results:"
+          jq -r '.runs[].results[] | .level // "null"' "$SARIF_FILE" 2>/dev/null | sort | uniq -c || echo "Could not extract levels"
+          echo "🔧 Debug - Unique severities found in result properties:"
+          jq -r '.runs[].results[] | .properties.severity // .properties."problem.severity" // "none"' "$SARIF_FILE" 2>/dev/null | sort | uniq -c || echo "Could not extract result severities"
+          echo "🔧 Debug - Unique severities found in rules:"
+          jq -r '.runs[].tool.driver.rules[] | .properties."problem.severity" // .properties.severity // .level // "none"' "$SARIF_FILE" 2>/dev/null | sort | uniq -c || echo "Could not extract rule severities"
         else
           echo "⚠️ No SARIF results file found"
           echo "count=0" >> $GITHUB_OUTPUT
