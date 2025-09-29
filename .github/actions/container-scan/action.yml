@@ -10,9 +10,9 @@ inputs:
     required: false
     default: 'MEDIUM'
   fail-on-critical:
-    description: 'Fail the action if critical vulnerabilities are found'
+    description: 'Fail the action if critical vulnerabilities are found (auto-detected based on branch if not explicitly set)'
     required: false
-    default: 'true'
+    default: 'auto'
   output-format:
     description: 'Output format (table, json, sarif)'
     required: false
@@ -23,6 +23,10 @@ inputs:
   registry-password:
     description: 'Registry password for private images'
     required: false
+  github-token:
+    description: 'GitHub token for uploading SARIF reports'
+    required: false
+    default: ${{ github.token }}
 
 outputs:
   vulnerabilities-found:
@@ -121,8 +125,32 @@ runs:
             cat "$TABLE_FILE"
           fi
           
+          # Determine fail-on-critical behavior based on branch if set to 'auto'
+          FAIL_ON_CRITICAL="${{ inputs.fail-on-critical }}"
+          
+          if [ "$FAIL_ON_CRITICAL" = "auto" ]; then
+            BRANCH_NAME="${{ github.ref_name }}"
+            echo "🔍 Auto-detecting security policy for branch: $BRANCH_NAME"
+            
+            # Default to strict security for production branches
+            FAIL_ON_CRITICAL="true"
+            
+            # Allow critical vulnerabilities for development branches
+            if [[ "$BRANCH_NAME" == "develop" ]] || \
+               [[ "$BRANCH_NAME" == release/* ]] || \
+               [[ "$BRANCH_NAME" == feature/* ]] || \
+               [[ "$BRANCH_NAME" == hotfix/* ]]; then
+              FAIL_ON_CRITICAL="false"
+              echo "🧪 Development branch detected - allowing critical vulnerabilities to pass"
+            else
+              echo "🔒 Production branch detected - strict security policy (fail on critical)"
+            fi
+          fi
+          
+          echo "📋 Final security policy: fail-on-critical = $FAIL_ON_CRITICAL"
+          
           # Check if we should fail on critical vulnerabilities
-          if [ "${{ inputs.fail-on-critical }}" = "true" ] && [ "$CRITICAL_COUNT" -gt 0 ]; then
+          if [ "$FAIL_ON_CRITICAL" = "true" ] && [ "$CRITICAL_COUNT" -gt 0 ]; then
             echo "❌ Found $CRITICAL_COUNT critical vulnerabilities. Failing as requested."
             exit 1
           fi
@@ -151,10 +179,11 @@ runs:
 
     - name: Upload SARIF Report
       if: always() && hashFiles('security-reports/trivy-report.sarif') != ''
-      uses: github/codeql-action/upload-sarif@v2
+      uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: security-reports/trivy-report.sarif
         category: container-security
+        token: ${{ inputs.github-token }}
 
     - name: Generate Security Summary
       shell: bash
@@ -166,4 +195,4 @@ runs:
         echo "- **High**: ${{ steps.scan.outputs.high }} ⚠️" >> $GITHUB_STEP_SUMMARY
         echo "- **Medium**: ${{ steps.scan.outputs.medium }} ℹ️" >> $GITHUB_STEP_SUMMARY
         echo "- **Severity Threshold**: ${{ inputs.severity-threshold }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Fail on Critical**: ${{ inputs.fail-on-critical == 'true' && '✅ Yes' || '❌ No' }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Fail on Critical**: ${{ inputs.fail-on-critical == 'auto' && '🤖 Auto-detected based on branch' || (inputs.fail-on-critical == 'true' && '🔒 Strict' || '🧪 Permissive') }}" >> $GITHUB_STEP_SUMMARY

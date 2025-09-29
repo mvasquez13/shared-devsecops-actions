@@ -31,6 +31,10 @@ on:
         required: false
         type: number
         default: 80
+      fail-on-critical-vulnerabilities:
+        description: 'Override: Fail the pipeline if critical vulnerabilities are found (auto-detected based on branch if not provided)'
+        required: false
+        type: boolean
       # Deployment
       # deploy-to-staging:
       #   description: 'Deploy to staging environment'
@@ -71,6 +75,11 @@ on:
       # deployment-url:
       #   description: 'Deployment URL'
       #   value: ${{ jobs.deploy-production.outputs.url }}
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
 
 jobs:
   # validation:
@@ -126,14 +135,22 @@ jobs:
         uses: mvasquez13/shared-devsecops-actions/.github/actions/container-scan@main
         with:
           image: ${{ steps.docker.outputs.full-image-url }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fail-on-critical: auto
 
       - name: Generate Build Summary
         run: |
           echo "## 🚀 Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "- **Application**: ${{ inputs.app-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Semantic Version**: ${{ steps.docker.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Image**: \`${{ steps.docker.outputs.full-image-url }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Digest**: \`${{ steps.docker.outputs.image-digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔒 Security Policy" >> $GITHUB_STEP_SUMMARY
+          echo "- **Vulnerability Policy**: 🤖 Auto-detected based on branch type" >> $GITHUB_STEP_SUMMARY
+          echo "  - Development branches (develop, feature/*, release/*, hotfix/*): Permissive" >> $GITHUB_STEP_SUMMARY
+          echo "  - Production branches (main, master, etc.): Strict" >> $GITHUB_STEP_SUMMARY
 
   sast_analysis:
     name: SAST Analysis
