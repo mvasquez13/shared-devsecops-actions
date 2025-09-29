@@ -349,7 +349,7 @@ jobs:
       - name: Send Metrics to Grafana Cloud
         uses: mvasquez13/shared-devsecops-actions/.github/actions/notify-grafana@main
         with:
-          grafana-api-key: ${{ secrets.GRAFANA_API_KEY }}
+          grafana-api-key: ${{ secrets.grafana-api-key }}
           app-name: ${{ inputs.app-name }}
           app-version: ${{ needs.build.outputs.semantic-version || github.sha }}
           environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'develop' && 'staging' || 'development' }}
