@@ -360,3 +360,5 @@ jobs:
           vulnerabilities-low: ${{ steps.vulnerabilities.outputs.low }}
           code-coverage: ${{ needs.build.outputs.code-coverage || 0 }}
           execution-time: ${{ needs.build.outputs.execution-time || 0 }}
+          enable-loki: 'false'
+          enable-annotations: 'false'
