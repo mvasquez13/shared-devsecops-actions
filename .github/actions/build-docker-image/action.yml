@@ -5,9 +5,10 @@ inputs:
   app-name:
     description: 'Application name'
     required: true
-  # registry-url:
-  #   description: 'Container registry URL'
-  #   required: true
+  registry-url:
+    description: 'Container registry URL'
+    required: true
+    default: 'mvasquez13'
   image-name:
     description: 'Docker image name'
     required: true
@@ -77,8 +78,7 @@ runs:
         
         # Generate semantic version: version-date
         SEMANTIC_VERSION="${CLEAN_VERSION}-${DATE}"
-        FULL_IMAGE_URL="${{ inputs.image-name }}:${SEMANTIC_VERSION}"
-        # FULL_IMAGE_URL="${{ inputs.registry-url }}/${{ inputs.image-name }}:${SEMANTIC_VERSION}"
+        FULL_IMAGE_URL="${{ inputs.registry-url }}/${{ inputs.image-name }}:${SEMANTIC_VERSION}"
         
         echo "semantic-version=$SEMANTIC_VERSION" >> $GITHUB_OUTPUT
         echo "full-image-url=$FULL_IMAGE_URL" >> $GITHUB_OUTPUT
