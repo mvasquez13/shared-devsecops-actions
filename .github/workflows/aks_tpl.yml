@@ -113,6 +113,10 @@ jobs:
       build-status: ${{ job.status }}
       code-coverage: ${{ steps.tests.outputs.coverage-percentage }}
       execution-time: ${{ steps.timing.outputs.duration }}
+      container-critical: ${{ steps.container-scan.outputs.critical-vulnerabilities }}
+      container-high: ${{ steps.container-scan.outputs.high-vulnerabilities }}
+      container-medium: ${{ steps.container-scan.outputs.medium-vulnerabilities }}
+      container-low: ${{ steps.container-scan.outputs.low-vulnerabilities }}
     
     steps:
       - name: Checkout code
@@ -149,10 +153,20 @@ jobs:
           registry-password: ${{ secrets.registry-password }}
 
       - name: Container Security Scan
+        id: container-scan
         uses: mvasquez13/shared-devsecops-actions/.github/actions/container-scan@main
         with:
           image: ${{ steps.docker.outputs.full-image-url }}
           fail-on-critical: 'false'
+
+      - name: Debug Container Scan Outputs
+        run: |
+          echo "🔍 Container Scan Debug - Outputs generated:"
+          echo "  Critical: '${{ steps.container-scan.outputs.critical-vulnerabilities }}'"
+          echo "  High: '${{ steps.container-scan.outputs.high-vulnerabilities }}'"
+          echo "  Medium: '${{ steps.container-scan.outputs.medium-vulnerabilities }}'"
+          echo "  Low: '${{ steps.container-scan.outputs.low-vulnerabilities }}'"
+          echo "  Total: '${{ steps.container-scan.outputs.total-vulnerabilities }}'"
 
       - name: Generate Build Summary
         run: |
@@ -162,6 +176,12 @@ jobs:
           echo "- **Semantic Version**: ${{ steps.docker.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Image**: \`${{ steps.docker.outputs.full-image-url }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Digest**: \`${{ steps.docker.outputs.image-digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔒 Container Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "- **Critical**: ${{ steps.container-scan.outputs.critical-vulnerabilities || 0 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **High**: ${{ steps.container-scan.outputs.high-vulnerabilities || 0 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Medium**: ${{ steps.container-scan.outputs.medium-vulnerabilities || 0 }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Low**: ${{ steps.container-scan.outputs.low-vulnerabilities || 0 }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Calculate Execution Time
         id: timing
@@ -190,8 +210,6 @@ jobs:
       actions: read
       contents: read
       packages: read
-    needs: build
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -228,8 +246,6 @@ jobs:
       actions: read
       contents: read
       packages: read
-    needs: build
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -315,6 +331,10 @@ jobs:
           echo "  SCA High: '${{ needs.sca_analysis.outputs.sca-high }}'"
           echo "  SCA Medium: '${{ needs.sca_analysis.outputs.sca-medium }}'"
           echo "  SCA Low: '${{ needs.sca_analysis.outputs.sca-low }}'"
+          echo "  Container Critical: '${{ needs.build.outputs.container-critical }}'"
+          echo "  Container High: '${{ needs.build.outputs.container-high }}'"
+          echo "  Container Medium: '${{ needs.build.outputs.container-medium }}'"
+          echo "  Container Low: '${{ needs.build.outputs.container-low }}'"
           echo ""
           
           # SAST vulnerabilities (with fallback to 0)
@@ -329,17 +349,23 @@ jobs:
           SCA_MEDIUM="${{ needs.sca_analysis.outputs.sca-medium || 0 }}"
           SCA_LOW="${{ needs.sca_analysis.outputs.sca-low || 0 }}"
           
+          # Container vulnerabilities (with fallback to 0)
+          CONTAINER_CRITICAL="${{ needs.build.outputs.container-critical || 0 }}"
+          CONTAINER_HIGH="${{ needs.build.outputs.container-high || 0 }}"
+          CONTAINER_MEDIUM="${{ needs.build.outputs.container-medium || 0 }}"
+          CONTAINER_LOW="${{ needs.build.outputs.container-low || 0 }}"
+          
           # Calculate totals
-          TOTAL_CRITICAL=$((SAST_CRITICAL + SCA_CRITICAL))
-          TOTAL_HIGH=$((SAST_HIGH + SCA_HIGH))
-          TOTAL_MEDIUM=$((SAST_MEDIUM + SCA_MEDIUM))
-          TOTAL_LOW=$((SAST_LOW + SCA_LOW))
+          TOTAL_CRITICAL=$((SAST_CRITICAL + SCA_CRITICAL + CONTAINER_CRITICAL))
+          TOTAL_HIGH=$((SAST_HIGH + SCA_HIGH + CONTAINER_HIGH))
+          TOTAL_MEDIUM=$((SAST_MEDIUM + SCA_MEDIUM + CONTAINER_MEDIUM))
+          TOTAL_LOW=$((SAST_LOW + SCA_LOW + CONTAINER_LOW))
           
           echo "🔍 Vulnerability Summary:"
-          echo "  Critical: ${TOTAL_CRITICAL} (SAST: ${SAST_CRITICAL}, SCA: ${SCA_CRITICAL})"
-          echo "  High: ${TOTAL_HIGH} (SAST: ${SAST_HIGH}, SCA: ${SCA_HIGH})"
-          echo "  Medium: ${TOTAL_MEDIUM} (SAST: ${SAST_MEDIUM}, SCA: ${SCA_MEDIUM})"
-          echo "  Low: ${TOTAL_LOW} (SAST: ${SAST_LOW}, SCA: ${SCA_LOW})"
+          echo "  Critical: ${TOTAL_CRITICAL} (SAST: ${SAST_CRITICAL}, SCA: ${SCA_CRITICAL}, Container: ${CONTAINER_CRITICAL})"
+          echo "  High: ${TOTAL_HIGH} (SAST: ${SAST_HIGH}, SCA: ${SCA_HIGH}, Container: ${CONTAINER_HIGH})"
+          echo "  Medium: ${TOTAL_MEDIUM} (SAST: ${SAST_MEDIUM}, SCA: ${SCA_MEDIUM}, Container: ${CONTAINER_MEDIUM})"
+          echo "  Low: ${TOTAL_LOW} (SAST: ${SAST_LOW}, SCA: ${SCA_LOW}, Container: ${CONTAINER_LOW})"
           
           echo "critical=${TOTAL_CRITICAL}" >> $GITHUB_OUTPUT
           echo "high=${TOTAL_HIGH}" >> $GITHUB_OUTPUT

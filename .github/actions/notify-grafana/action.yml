@@ -122,7 +122,7 @@ runs:
         echo ""
         echo "🎯 Grafana Cloud Stack Overview:"
         echo "  📝 Loki (Logs): Events, messages, pipeline context"
-        echo "  📊 Prometheus (Metrics): Numerical data for dashboards/alerts"
+        echo "  📊 Prometheus (Metrics): DevSecOps metrics via Python script"
         echo "  📋 Annotations: Timeline events in dashboards"
         echo ""
         echo "🌐 Endpoint URLs:"
@@ -179,38 +179,57 @@ runs:
           echo "⏭️ Loki integration disabled"
         fi
         
-        # Prometheus Integration
+        # Prometheus Integration using send_data.py script
         if [ "${{ inputs.enable-prometheus }}" = "true" ]; then
-          echo "📊 Sending METRICS to Grafana Prometheus..."
+          echo "📊 Sending METRICS to Prometheus via send_data.py script..."
           
-          BUILD_STATUS_METRIC=0
-          if [ "${{ inputs.build-status }}" = "success" ]; then
-            BUILD_STATUS_METRIC=1
+          # Convert build status to numeric (1=success, 0=failure)
+          BUILD_STATUS_NUMERIC=1
+          if [ "${{ inputs.build-status }}" != "success" ]; then
+            BUILD_STATUS_NUMERIC=0
           fi
           
-          printf '# HELP devsecops_build_status Build status (1=success, 0=failure)\n# TYPE devsecops_build_status gauge\ndevsecops_build_status{app="${{ inputs.app-name }}",version="${{ inputs.app-version }}",environment="${{ inputs.environment }}"} %s %s000\n\n# HELP devsecops_vulnerabilities_total Total vulnerabilities by severity\n# TYPE devsecops_vulnerabilities_total gauge\ndevsecops_vulnerabilities_total{app="${{ inputs.app-name }}",severity="critical",environment="${{ inputs.environment }}"} ${{ inputs.vulnerabilities-critical }} %s000\ndevsecops_vulnerabilities_total{app="${{ inputs.app-name }}",severity="high",environment="${{ inputs.environment }}"} ${{ inputs.vulnerabilities-high }} %s000\ndevsecops_vulnerabilities_total{app="${{ inputs.app-name }}",severity="medium",environment="${{ inputs.environment }}"} ${{ inputs.vulnerabilities-medium }} %s000\ndevsecops_vulnerabilities_total{app="${{ inputs.app-name }}",severity="low",environment="${{ inputs.environment }}"} ${{ inputs.vulnerabilities-low }} %s000\n\n# HELP devsecops_code_coverage_percent Code coverage percentage\n# TYPE devsecops_code_coverage_percent gauge\ndevsecops_code_coverage_percent{app="${{ inputs.app-name }}",environment="${{ inputs.environment }}"} ${{ inputs.code-coverage }} %s000\n\n# HELP devsecops_execution_time_seconds Pipeline execution time\n# TYPE devsecops_execution_time_seconds gauge\ndevsecops_execution_time_seconds{app="${{ inputs.app-name }}",environment="${{ inputs.environment }}"} ${{ inputs.execution-time }} %s000\n' \
-            "${BUILD_STATUS_METRIC}" "${TIMESTAMP}" "${TIMESTAMP}" "${TIMESTAMP}" "${TIMESTAMP}" "${TIMESTAMP}" "${TIMESTAMP}" "${TIMESTAMP}" > /tmp/prometheus-metrics.txt
+          echo "🐍 Executing Python script with metrics..."
           
-          REMOTE_WRITE_ENDPOINT="${PROMETHEUS_URL}/api/prom/push"
-          
-          if curl -X POST \
-            -u "${GRAFANA_API_KEY}" \
-            -H "Content-Type: application/x-protobuf" \
-            -H "Content-Encoding: snappy" \
-            -H "X-Prometheus-Remote-Write-Version: 0.1.0" \
-            --data-binary @/tmp/prometheus-metrics.txt \
-            "${REMOTE_WRITE_ENDPOINT}" \
-            --silent --show-error; then
-            echo "✅ Metrics sent to Prometheus"
-            PROMETHEUS_STATUS="success"
-            METRICS_COUNT=6
+          # Check if python is available
+          if command -v python3 &> /dev/null; then
+            PYTHON_CMD="python3"
+          elif command -v python &> /dev/null; then
+            PYTHON_CMD="python"
           else
-            echo "⚠️ Prometheus integration failed"
+            echo "❌ Python not found. Installing python3..."
+            apt-get update && apt-get install -y python3 python3-pip
+            PYTHON_CMD="python3"
+          fi
+          
+          # Install required dependencies if not present
+          if ! $PYTHON_CMD -c "import prometheus_remote_writer" 2>/dev/null; then
+            echo "📦 Installing prometheus-remote-writer..."
+            $PYTHON_CMD -m pip install prometheus-remote-writer
+          fi
+          
+          # Execute the send_data.py script with arguments
+          if $PYTHON_CMD ${{ github.action_path }}/send_data.py \
+            --app-name "${{ inputs.app-name }}" \
+            --app-version "${{ inputs.app-version }}" \
+            --environment "${{ inputs.environment }}" \
+            --build-status ${BUILD_STATUS_NUMERIC} \
+            --vulnerabilities-critical ${{ inputs.vulnerabilities-critical }} \
+            --vulnerabilities-high ${{ inputs.vulnerabilities-high }} \
+            --vulnerabilities-medium ${{ inputs.vulnerabilities-medium }} \
+            --vulnerabilities-low ${{ inputs.vulnerabilities-low }} \
+            --code-coverage ${{ inputs.code-coverage }} \
+            --execution-time ${{ inputs.execution-time }} \
+            --grafana-api-key "${GRAFANA_API_KEY}" \
+            --pushgateway-url "${PROMETHEUS_URL}/api/prom/push"; then
+            echo "✅ Metrics sent to Prometheus successfully via Python script"
+            PROMETHEUS_STATUS="success"
+            METRICS_COUNT=7
+          else
+            echo "⚠️ Prometheus metrics via Python script failed"
             PROMETHEUS_STATUS="failed"
             OVERALL_STATUS="partial"
           fi
-          
-          rm -f /tmp/prometheus-metrics.txt
         else
           echo "⏭️ Prometheus integration disabled"
         fi
