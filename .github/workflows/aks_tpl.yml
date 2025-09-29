@@ -76,9 +76,6 @@ on:
       #   description: 'Deployment URL'
       #   value: ${{ jobs.deploy-production.outputs.url }}
 
-permissions:
-  security-events: write
-
 jobs:
   # validation:
   #   runs-on: ubuntu-latest
@@ -133,7 +130,6 @@ jobs:
         uses: mvasquez13/shared-devsecops-actions/.github/actions/container-scan@main
         with:
           image: ${{ steps.docker.outputs.full-image-url }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           fail-on-critical: auto
 
       - name: Generate Build Summary
