@@ -1,0 +1,186 @@
+# Kubernetes Template Manifest for MiBanco App
+# This is a parameterized template for Spring Boot applications
+# Variables to replace:
+#   - {{APP_NAME}}: Application name (e.g., mibanco-app)
+#   - {{NAMESPACE}}: Kubernetes namespace (e.g., mibanco, staging, production)
+#   - {{IMAGE_REGISTRY}}: Container registry URL (e.g., myregistry.azurecr.io)
+#   - {{IMAGE_TAG}}: Docker image tag (e.g., latest, v1.0.0, commit-sha)
+#   - {{REPLICAS}}: Number of replicas (e.g., 2, 3, 5)
+#   - {{ENVIRONMENT}}: Environment name (e.g., dev, staging, prod)
+#   - {{INGRESS_HOST}}: Ingress hostname (e.g., app.mibanco.com)
+
+---
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{NAMESPACE}}
+  labels:
+    name: {{NAMESPACE}}
+    purpose: application
+    environment: {{ENVIRONMENT}}
+
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{APP_NAME}}
+  namespace: {{NAMESPACE}}
+  labels:
+    app: {{APP_NAME}}
+    tier: backend
+    environment: {{ENVIRONMENT}}
+spec:
+  replicas: {{REPLICAS}}
+  selector:
+    matchLabels:
+      app: {{APP_NAME}}
+  template:
+    metadata:
+      labels:
+        app: {{APP_NAME}}
+        tier: backend
+        environment: {{ENVIRONMENT}}
+    spec:
+      containers:
+      - name: {{APP_NAME}}
+        image: {{IMAGE_REGISTRY}}/{{APP_NAME}}:{{IMAGE_TAG}}
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: "{{ENVIRONMENT}}"
+        - name: JAVA_OPTS
+          value: "-Xmx512m -Xms256m"
+        - name: ENVIRONMENT
+          value: "{{ENVIRONMENT}}"
+        - name: NAMESPACE
+          value: "{{NAMESPACE}}"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 5
+
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{APP_NAME}}-service
+  namespace: {{NAMESPACE}}
+  labels:
+    app: {{APP_NAME}}
+    environment: {{ENVIRONMENT}}
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: {{APP_NAME}}
+
+---
+# ConfigMap (opcional para configuraciones)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{APP_NAME}}-config
+  namespace: {{NAMESPACE}}
+  labels:
+    app: {{APP_NAME}}
+    environment: {{ENVIRONMENT}}
+data:
+  application.properties: |
+    # Basic Spring Boot configuration for {{ENVIRONMENT}}
+    server.port=8080
+    management.endpoints.web.exposure.include=health,info
+    management.endpoint.health.show-details=always
+    logging.level.com.mibanco=INFO
+    spring.datasource.hikari.maximum-pool-size=10
+    
+    # Environment specific configuration
+    app.name={{APP_NAME}}
+    app.environment={{ENVIRONMENT}}
+    app.namespace={{NAMESPACE}}
+
+---
+# Ingress (opcional para exposición externa)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{APP_NAME}}-ingress
+  namespace: {{NAMESPACE}}
+  labels:
+    app: {{APP_NAME}}
+    environment: {{ENVIRONMENT}}
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - {{INGRESS_HOST}}
+    secretName: {{APP_NAME}}-tls
+  rules:
+  - host: {{INGRESS_HOST}}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: {{APP_NAME}}-service
+            port:
+              number: 80
+
+---
+# HorizontalPodAutoscaler (opcional para auto-scaling)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{APP_NAME}}-hpa
+  namespace: {{NAMESPACE}}
+  labels:
+    app: {{APP_NAME}}
+    environment: {{ENVIRONMENT}}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{APP_NAME}}
+  minReplicas: {{REPLICAS}}
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
