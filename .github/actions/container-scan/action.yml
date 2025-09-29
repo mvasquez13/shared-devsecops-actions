@@ -11,8 +11,7 @@ inputs:
     default: 'MEDIUM'
   fail-on-critical:
     description: 'Fail the action if critical vulnerabilities are found (auto-detected based on branch if not explicitly set)'
-    required: false
-    default: 'auto'
+    required: true
   output-format:
     description: 'Output format (table, json, sarif)'
     required: false
