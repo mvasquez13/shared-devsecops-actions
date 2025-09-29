@@ -13,9 +13,24 @@ outputs:
   results-count:
     description: 'Number of security issues found'
     value: ${{ steps.results.outputs.count }}
+  critical-count:
+    description: 'Number of critical/error issues'
+    value: ${{ steps.results.outputs.critical }}
+  high-severity-count:
+    description: 'Number of high severity issues'
+    value: ${{ steps.results.outputs.high-severity }}
+  medium-severity-count:
+    description: 'Number of medium severity issues'
+    value: ${{ steps.results.outputs.medium-severity }}
+  low-severity-count:
+    description: 'Number of low severity issues'
+    value: ${{ steps.results.outputs.low-severity }}
   database-path:
     description: 'Path to CodeQL database'
     value: ${{ steps.init.outputs.codeql-path }}
+  sarif-file:
+    description: 'Path to SARIF results file'
+    value: ${{ steps.results.outputs.sarif-file }}
 
 runs:
   using: 'composite'
@@ -73,38 +88,65 @@ runs:
         if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
           echo "� Found SARIF file: $SARIF_FILE"
           
+          # Debug: Show SARIF structure first
+          echo "🔍 SARIF structure analysis:"
+          jq '.runs[].results[0:2] | .[] | {ruleId: .ruleId, level: .level, kind: .kind, severity: (.properties.severity // "N/A")}' "$SARIF_FILE" 2>/dev/null || echo "Could not analyze SARIF structure"
+          
           # Count total results
-          TOTAL_RESULTS=$(jq '.runs[].results | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          TOTAL_RESULTS=$(jq '[.runs[].results] | add | length' "$SARIF_FILE" 2>/dev/null || echo "0")
           
-          # Count by severity levels
-          CRITICAL_COUNT=$(jq '.runs[].results[] | select(.level == "error") | .level' "$SARIF_FILE" 2>/dev/null | wc -l || echo "0")
-          WARNING_COUNT=$(jq '.runs[].results[] | select(.level == "warning") | .level' "$SARIF_FILE" 2>/dev/null | wc -l || echo "0")
-          INFO_COUNT=$(jq '.runs[].results[] | select(.level == "note") | .level' "$SARIF_FILE" 2>/dev/null | wc -l || echo "0")
+          # Count by CodeQL severity levels (error, warning, note, info)
+          ERROR_COUNT=$(jq '[.runs[].results[] | select(.level == "error")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          WARNING_COUNT=$(jq '[.runs[].results[] | select(.level == "warning")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          NOTE_COUNT=$(jq '[.runs[].results[] | select(.level == "note")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          INFO_COUNT=$(jq '[.runs[].results[] | select(.level == "info")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
           
+          # Also check for severity in properties (CodeQL sometimes uses this)
+          HIGH_SEVERITY=$(jq '[.runs[].results[] | select(.properties.severity == "high")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          MEDIUM_SEVERITY=$(jq '[.runs[].results[] | select(.properties.severity == "medium")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          LOW_SEVERITY=$(jq '[.runs[].results[] | select(.properties.severity == "low")] | length' "$SARIF_FILE" 2>/dev/null || echo "0")
+          
+          # Set outputs
           echo "count=$TOTAL_RESULTS" >> $GITHUB_OUTPUT
-          echo "critical=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+          echo "critical=$ERROR_COUNT" >> $GITHUB_OUTPUT
           echo "warning=$WARNING_COUNT" >> $GITHUB_OUTPUT
-          echo "info=$INFO_COUNT" >> $GITHUB_OUTPUT
+          echo "info=$((NOTE_COUNT + INFO_COUNT))" >> $GITHUB_OUTPUT
+          echo "high-severity=$HIGH_SEVERITY" >> $GITHUB_OUTPUT
+          echo "medium-severity=$MEDIUM_SEVERITY" >> $GITHUB_OUTPUT
+          echo "low-severity=$LOW_SEVERITY" >> $GITHUB_OUTPUT
           echo "sarif-file=$SARIF_FILE" >> $GITHUB_OUTPUT
           
           echo "🔍 CodeQL Analysis Summary:"
           echo "  - Total Issues: $TOTAL_RESULTS"
-          echo "  - Critical/Error: $CRITICAL_COUNT"
+          echo "  - Critical/Error: $ERROR_COUNT"
           echo "  - Warning: $WARNING_COUNT" 
-          echo "  - Info: $INFO_COUNT"
+          echo "  - Note/Info: $((NOTE_COUNT + INFO_COUNT))"
+          echo "  - High Severity: $HIGH_SEVERITY"
+          echo "  - Medium Severity: $MEDIUM_SEVERITY"
+          echo "  - Low Severity: $LOW_SEVERITY"
           
-          # Show some example issues if found
+          # Show detailed breakdown of all issues
           if [ "$TOTAL_RESULTS" -gt 0 ]; then
             echo ""
-            echo "📋 Sample Issues Found:"
-            jq -r '.runs[].results[:3] | .[] | "- \(.ruleId): \(.message.text)"' "$SARIF_FILE" 2>/dev/null || echo "Could not parse issue details"
+            echo "📋 Detailed Issues Found:"
+            jq -r '.runs[].results[] | "- [\(.level)] \(.ruleId): \(.message.text) (Severity: \(.properties.severity // "N/A"))"' "$SARIF_FILE" 2>/dev/null || echo "Could not parse issue details"
           fi
+          
+          # Debug: Show unique levels and severities found
+          echo ""
+          echo "🔧 Debug - Unique levels found:"
+          jq -r '.runs[].results[] | .level' "$SARIF_FILE" 2>/dev/null | sort | uniq -c || echo "Could not extract levels"
+          echo "🔧 Debug - Unique severities found:"
+          jq -r '.runs[].results[] | .properties.severity // "none"' "$SARIF_FILE" 2>/dev/null | sort | uniq -c || echo "Could not extract severities"
         else
           echo "⚠️ No SARIF results file found"
           echo "count=0" >> $GITHUB_OUTPUT
           echo "critical=0" >> $GITHUB_OUTPUT
           echo "warning=0" >> $GITHUB_OUTPUT
           echo "info=0" >> $GITHUB_OUTPUT
+          echo "high-severity=0" >> $GITHUB_OUTPUT
+          echo "medium-severity=0" >> $GITHUB_OUTPUT
+          echo "low-severity=0" >> $GITHUB_OUTPUT
         fi
 
     - name: Check Security Threshold
@@ -125,12 +167,18 @@ runs:
       run: |
         echo "## 🔍 CodeQL SAST Analysis Results" >> $GITHUB_STEP_SUMMARY
         echo "- **Language**: ${{ inputs.language }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Query Suite**: ${{ inputs.queries }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Build Command**: \`${{ inputs.build-command }}\`" >> $GITHUB_STEP_SUMMARY
         echo "- **Total Issues**: ${{ steps.results.outputs.count || 'N/A' }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📊 By Level" >> $GITHUB_STEP_SUMMARY
         echo "- **Critical/Error**: ${{ steps.results.outputs.critical || 'N/A' }} 🚨" >> $GITHUB_STEP_SUMMARY
         echo "- **Warning**: ${{ steps.results.outputs.warning || 'N/A' }} ⚠️" >> $GITHUB_STEP_SUMMARY
         echo "- **Info**: ${{ steps.results.outputs.info || 'N/A' }} ℹ️" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🎯 By Severity" >> $GITHUB_STEP_SUMMARY
+        echo "- **High**: ${{ steps.results.outputs.high-severity || 'N/A' }} 🔴" >> $GITHUB_STEP_SUMMARY
+        echo "- **Medium**: ${{ steps.results.outputs.medium-severity || 'N/A' }} 🟡" >> $GITHUB_STEP_SUMMARY
+        echo "- **Low**: ${{ steps.results.outputs.low-severity || 'N/A' }} 🟢" >> $GITHUB_STEP_SUMMARY
         
         if [ "${{ steps.results.outputs.count }}" -gt 0 ]; then
           echo "" >> $GITHUB_STEP_SUMMARY

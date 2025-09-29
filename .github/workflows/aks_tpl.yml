@@ -88,63 +88,63 @@ jobs:
   #         username: ${{ github.actor }}
   #         GITHUB_TOKEN: ${{ secrets.PAT }}
 
-  # build:
-  #   name: Build and Test
-  #   runs-on: ubuntu-latest
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
     
-  #   outputs:
-  #     image-tag: ${{ steps.docker.outputs.full-image-url }}
-  #     image-digest: ${{ steps.docker.outputs.image-digest }}
-  #     semantic-version: ${{ steps.docker.outputs.semantic-version }}
+    outputs:
+      image-tag: ${{ steps.docker.outputs.full-image-url }}
+      image-digest: ${{ steps.docker.outputs.image-digest }}
+      semantic-version: ${{ steps.docker.outputs.semantic-version }}
     
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v4
-  #       with:
-  #         fetch-depth: 0
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-  #     - name: Run Tests
-  #       uses: mvasquez13/shared-devsecops-actions/.github/actions/run-tests/maven@main
-  #       with:
-  #         maven-args: ${{ inputs.maven-args }}
-  #         coverage-threshold: ${{ inputs.coverage-threshold }}
+      - name: Run Tests
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/run-tests/maven@main
+        with:
+          maven-args: ${{ inputs.maven-args }}
+          coverage-threshold: ${{ inputs.coverage-threshold }}
 
-  #     - name: Build Application
-  #       uses: mvasquez13/shared-devsecops-actions/.github/actions/build-app/maven@main
-  #       with:
-  #         app-name: ${{ inputs.app-name }}
-  #         maven-args: ${{ inputs.maven-args }}
+      - name: Build Application
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/build-app/maven@main
+        with:
+          app-name: ${{ inputs.app-name }}
+          maven-args: ${{ inputs.maven-args }}
 
-  #     - name: Build Docker Image
-  #       id: docker
-  #       uses: mvasquez13/shared-devsecops-actions/.github/actions/build-docker-image@main
-  #       with:
-  #         app-name: ${{ inputs.app-name }}
-  #         image-name: ${{ inputs.app-name }}
-  #         dockerfile-path: ${{ inputs.dockerfile-path }}
-  #         build-context: ${{ inputs.build-context }}
-  #         registry-username: ${{ secrets.registry-username }} 
-  #         registry-password: ${{ secrets.registry-password }}
+      - name: Build Docker Image
+        id: docker
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/build-docker-image@main
+        with:
+          app-name: ${{ inputs.app-name }}
+          image-name: ${{ inputs.app-name }}
+          dockerfile-path: ${{ inputs.dockerfile-path }}
+          build-context: ${{ inputs.build-context }}
+          registry-username: ${{ secrets.registry-username }} 
+          registry-password: ${{ secrets.registry-password }}
 
-  #     - name: Container Security Scan
-  #       uses: mvasquez13/shared-devsecops-actions/.github/actions/container-scan@main
-  #       with:
-  #         image: ${{ steps.docker.outputs.full-image-url }}
-  #         fail-on-critical: 'false'
+      - name: Container Security Scan
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/container-scan@main
+        with:
+          image: ${{ steps.docker.outputs.full-image-url }}
+          fail-on-critical: 'false'
 
-  #     - name: Generate Build Summary
-  #       run: |
-  #         echo "## 🚀 Build Summary" >> $GITHUB_STEP_SUMMARY
-  #         echo "- **Application**: ${{ inputs.app-name }}" >> $GITHUB_STEP_SUMMARY
-  #         echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-  #         echo "- **Semantic Version**: ${{ steps.docker.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
-  #         echo "- **Image**: \`${{ steps.docker.outputs.full-image-url }}\`" >> $GITHUB_STEP_SUMMARY
-  #         echo "- **Digest**: \`${{ steps.docker.outputs.image-digest }}\`" >> $GITHUB_STEP_SUMMARY
-  #         echo "" >> $GITHUB_STEP_SUMMARY
-  #         echo "### 🔒 Security Policy" >> $GITHUB_STEP_SUMMARY
-  #         echo "- **Vulnerability Policy**: 🤖 Auto-detected based on branch type" >> $GITHUB_STEP_SUMMARY
-  #         echo "  - Development branches (develop, feature/*, release/*, hotfix/*): Permissive" >> $GITHUB_STEP_SUMMARY
-  #         echo "  - Production branches (main, master, etc.): Strict" >> $GITHUB_STEP_SUMMARY
+      - name: Generate Build Summary
+        run: |
+          echo "## 🚀 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Application**: ${{ inputs.app-name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Semantic Version**: ${{ steps.docker.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: \`${{ steps.docker.outputs.full-image-url }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Digest**: \`${{ steps.docker.outputs.image-digest }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔒 Security Policy" >> $GITHUB_STEP_SUMMARY
+          echo "- **Vulnerability Policy**: 🤖 Auto-detected based on branch type" >> $GITHUB_STEP_SUMMARY
+          echo "  - Development branches (develop, feature/*, release/*, hotfix/*): Permissive" >> $GITHUB_STEP_SUMMARY
+          echo "  - Production branches (main, master, etc.): Strict" >> $GITHUB_STEP_SUMMARY
 
   sast_analysis:
     name: SAST Analysis
@@ -154,7 +154,7 @@ jobs:
       actions: read
       contents: read
       packages: read
-    # needs: build
+    needs: build
 
     steps:
       - name: Checkout code
