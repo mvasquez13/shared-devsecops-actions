@@ -17,11 +17,6 @@ outputs:
     description: 'Path to CodeQL database'
     value: ${{ steps.init.outputs.codeql-path }}
 
-permissions: 
-  security-events: write 
-  actions: read
-  contents: read
-
 runs:
   using: 'composite'
   steps:
