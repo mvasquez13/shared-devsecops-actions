@@ -181,9 +181,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       sast-critical: ${{ steps.sast.outputs.critical-count }}
-      sast-high: ${{ steps.sast.outputs.high-count }}
-      sast-medium: ${{ steps.sast.outputs.medium-count }}
-      sast-low: ${{ steps.sast.outputs.low-count }}
+      sast-high: ${{ steps.sast.outputs.high-severity-count }}
+      sast-medium: ${{ steps.sast.outputs.medium-severity-count }}
+      sast-low: ${{ steps.sast.outputs.low-severity-count }}
       sast-status: ${{ job.status }}
     permissions: 
       security-events: write 
@@ -204,15 +204,24 @@ jobs:
         with:
           language: 'java-kotlin'
           build-command: 'mvn clean compile -B'
+
+      - name: Debug SAST Outputs
+        run: |
+          echo "🔍 SAST Debug - Outputs generated:"
+          echo "  Critical: '${{ steps.sast.outputs.critical-count }}'"
+          echo "  High: '${{ steps.sast.outputs.high-severity-count }}'"
+          echo "  Medium: '${{ steps.sast.outputs.medium-severity-count }}'"
+          echo "  Low: '${{ steps.sast.outputs.low-severity-count }}'"
+          echo "  Results Count: '${{ steps.sast.outputs.results-count }}'"
   
   sca_analysis:
     name: SCA Analysis
     runs-on: ubuntu-latest
     outputs:
-      sca-critical: ${{ steps.sca.outputs.critical-count }}
-      sca-high: ${{ steps.sca.outputs.high-count }}
-      sca-medium: ${{ steps.sca.outputs.medium-count }}
-      sca-low: ${{ steps.sca.outputs.low-count }}
+      sca-critical: ${{ steps.sca.outputs.critical-vulnerabilities }}
+      sca-high: ${{ steps.sca.outputs.high-vulnerabilities }}
+      sca-medium: ${{ steps.sca.outputs.medium-vulnerabilities }}
+      sca-low: ${{ steps.sca.outputs.low-vulnerabilities }}
       sca-status: ${{ job.status }}
     permissions: 
       security-events: write 
@@ -235,6 +244,15 @@ jobs:
           fail-on-critical: 'false'
           fail-on-high: 'false'
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Debug SCA Outputs  
+        run: |
+          echo "🔍 SCA Debug - Outputs generated:"
+          echo "  Critical: '${{ steps.sca.outputs.critical-vulnerabilities }}'"
+          echo "  High: '${{ steps.sca.outputs.high-vulnerabilities }}'"
+          echo "  Medium: '${{ steps.sca.outputs.medium-vulnerabilities }}'"
+          echo "  Low: '${{ steps.sca.outputs.low-vulnerabilities }}'"
+          echo "  Total: '${{ steps.sca.outputs.total-vulnerabilities }}'"
 
   # deploy:
   #   name: Deploy
@@ -288,6 +306,17 @@ jobs:
       - name: Calculate Total Vulnerabilities
         id: vulnerabilities
         run: |
+          echo "🔍 Debug - Raw outputs from jobs:"
+          echo "  SAST Critical: '${{ needs.sast_analysis.outputs.sast-critical }}'"
+          echo "  SAST High: '${{ needs.sast_analysis.outputs.sast-high }}'"
+          echo "  SAST Medium: '${{ needs.sast_analysis.outputs.sast-medium }}'"
+          echo "  SAST Low: '${{ needs.sast_analysis.outputs.sast-low }}'"
+          echo "  SCA Critical: '${{ needs.sca_analysis.outputs.sca-critical }}'"
+          echo "  SCA High: '${{ needs.sca_analysis.outputs.sca-high }}'"
+          echo "  SCA Medium: '${{ needs.sca_analysis.outputs.sca-medium }}'"
+          echo "  SCA Low: '${{ needs.sca_analysis.outputs.sca-low }}'"
+          echo ""
+          
           # SAST vulnerabilities (with fallback to 0)
           SAST_CRITICAL="${{ needs.sast_analysis.outputs.sast-critical || 0 }}"
           SAST_HIGH="${{ needs.sast_analysis.outputs.sast-high || 0 }}"
