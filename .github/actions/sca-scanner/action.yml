@@ -296,9 +296,9 @@ runs:
         SARIF_FILE="sca-reports/sca-results.sarif"
         
         # Generate SARIF from Dependabot alerts
-        if [ -f "sca-reports/dependabot-alerts.json" ]; then
-          jq '
-          {
+        if [ -f "sca-reports/dependabot-alerts.json" ] && [ -s "sca-reports/dependabot-alerts.json" ]; then
+          echo "Creating SARIF from Dependabot alerts..."
+          jq '{
             "version": "2.1.0",
             "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
             "runs": [
@@ -355,25 +355,25 @@ runs:
             ]
           }' sca-reports/dependabot-alerts.json > "$SARIF_FILE"
         else
-          # Create empty SARIF if no alerts
+          echo "No Dependabot alerts found, creating empty SARIF..."
           cat > "$SARIF_FILE" << 'EOF'
-          {
-            "version": "2.1.0",
-            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-            "runs": [
-              {
-                "tool": {
-                  "driver": {
-                    "name": "Dependabot SCA Scanner",
-                    "version": "1.0.0",
-                    "informationUri": "https://github.com/dependabot"
-                  }
-                },
-                "results": []
-              }
-            ]
-          }
-          EOF
+{
+  "version": "2.1.0",
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "Dependabot SCA Scanner",
+          "version": "1.0.0",
+          "informationUri": "https://github.com/dependabot"
+        }
+      },
+      "results": []
+    }
+  ]
+}
+EOF
         fi
         
         echo "sarif-file=$SARIF_FILE" >> $GITHUB_OUTPUT
