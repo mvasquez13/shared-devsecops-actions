@@ -167,6 +167,29 @@ jobs:
         with:
           language: 'java-kotlin'
           build-command: 'mvn clean compile -B'
+  
+  sca_analysis:
+    name: SCA Analysis
+    runs-on: ubuntu-latest
+    permissions: 
+      security-events: write 
+      actions: read
+      contents: read
+      packages: read
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SCA Scan
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/sca-scanner@main
+        with:
+          package-manager: 'maven'
+          fail-on-critical: 'false'
+          fail-on-high: 'false'
 
   # deploy-staging:
   #   name: Deploy to Staging
