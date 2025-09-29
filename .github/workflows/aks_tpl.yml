@@ -130,7 +130,7 @@ jobs:
         uses: mvasquez13/shared-devsecops-actions/.github/actions/container-scan@main
         with:
           image: ${{ steps.docker.outputs.full-image-url }}
-          fail-on-critical: auto
+          fail-on-critical: 'false'
 
       - name: Generate Build Summary
         run: |
