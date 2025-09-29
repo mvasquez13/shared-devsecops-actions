@@ -318,7 +318,7 @@ jobs:
           echo "low=${TOTAL_LOW}" >> $GITHUB_OUTPUT
 
       - name: Send Metrics to Grafana Cloud
-        uses: ./shared-devsecops-actions/.github/actions/notify-grafana
+        uses: mvasquez13/shared-devsecops-actions/.github/actions/notify-grafana@main
         with:
           grafana-api-key: ${{ secrets.GRAFANA_API_KEY }}
           app-name: ${{ inputs.app-name }}
