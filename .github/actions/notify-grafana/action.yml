@@ -1,0 +1,272 @@
+name: 'Notify Grafana Cloud'
+description: 'Send DevSecOps pipeline metrics and events to Grafana Cloud (Loki, Prometheus, Annotations)'
+author: 'DevSecOps Team'
+
+inputs:
+  grafana-url:
+    description: 'Grafana Cloud instance URL (for annotations)'
+    required: true
+    default: 'https://mibancotestgithub.grafana.net'
+  loki-url:
+    description: 'Loki endpoint URL (e.g., https://logs-prod-us-central1.grafana.net)'
+    required: false
+    default: ''
+  prometheus-url:
+    description: 'Prometheus endpoint URL (e.g., https://prometheus-prod-us-central1.grafana.net)'
+    required: false
+    default: 'https://prometheus-prod-56-prod-us-east-2.grafana.net'
+  grafana-api-key:
+    description: 'Grafana Cloud API key or service account token'
+    required: true
+  app-name:
+    description: 'Application name'
+    required: true
+  app-version:
+    description: 'Application version'
+    required: true
+  environment:
+    description: 'Deployment environment (dev, staging, prod)'
+    required: true
+  build-status:
+    description: 'Build status (success, failure)'
+    required: true
+  vulnerabilities-critical:
+    description: 'Number of critical vulnerabilities'
+    required: false
+    default: '0'
+  vulnerabilities-high:
+    description: 'Number of high vulnerabilities'
+    required: false
+    default: '0'
+  vulnerabilities-medium:
+    description: 'Number of medium vulnerabilities'
+    required: false
+    default: '0'
+  vulnerabilities-low:
+    description: 'Number of low vulnerabilities'
+    required: false
+    default: '0'
+  code-coverage:
+    description: 'Code coverage percentage'
+    required: false
+    default: '0'
+  execution-time:
+    description: 'Pipeline execution time in seconds'
+    required: false
+    default: '0'
+  enable-loki:
+    description: 'Enable Loki log integration'
+    required: false
+    default: 'true'
+  enable-prometheus:
+    description: 'Enable Prometheus metrics integration'
+    required: false
+    default: 'true'
+  enable-annotations:
+    description: 'Enable Grafana annotations integration'
+    required: false
+    default: 'true'
+
+outputs:
+  status:
+    description: 'Overall integration status'
+    value: ${{ steps.grafana-integration.outputs.status }}
+  loki-status:
+    description: 'Loki integration status'
+    value: ${{ steps.grafana-integration.outputs.loki-status }}
+  prometheus-status:
+    description: 'Prometheus integration status'
+    value: ${{ steps.grafana-integration.outputs.prometheus-status }}
+  annotations-status:
+    description: 'Annotations integration status'
+    value: ${{ steps.grafana-integration.outputs.annotations-status }}
+  metrics-count:
+    description: 'Number of metrics sent'
+    value: ${{ steps.grafana-integration.outputs.metrics-count }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: 'Send Data to Grafana Cloud Stack'
+      id: grafana-integration
+      shell: bash
+      env:
+        GRAFANA_URL: ${{ inputs.grafana-url }}
+        LOKI_URL: ${{ inputs.loki-url }}
+        PROMETHEUS_URL: ${{ inputs.prometheus-url }}
+        GRAFANA_API_KEY: ${{ inputs.grafana-api-key }}
+      run: |
+        echo "📊 Grafana Cloud Modular Integration"
+        
+        # Current timestamp
+        TIMESTAMP=$(date +%s)
+        OVERALL_STATUS="success"
+        LOKI_STATUS="disabled"
+        PROMETHEUS_STATUS="disabled"
+        ANNOTATIONS_STATUS="disabled"
+        METRICS_COUNT=0
+        
+        # Auto-detect URLs if not provided
+        if [ -z "${LOKI_URL}" ] && [ "${{ inputs.enable-loki }}" = "true" ]; then
+          # Extract org from grafana URL and build Loki URL
+          LOKI_URL="https://logs-prod-us-central1.grafana.net"
+          echo "🔍 Auto-detected Loki URL: ${LOKI_URL}"
+        fi
+        
+        if [ -z "${PROMETHEUS_URL}" ] && [ "${{ inputs.enable-prometheus }}" = "true" ]; then
+          # Extract org from grafana URL and build Prometheus URL
+          PROMETHEUS_URL="https://prometheus-prod-us-central1.grafana.net"
+          echo "🔍 Auto-detected Prometheus URL: ${PROMETHEUS_URL}"
+        fi
+        
+        echo ""
+        echo "🎯 Grafana Cloud Stack Overview:"
+        echo "  📝 Loki (Logs): Events, messages, pipeline context"
+        echo "  📊 Prometheus (Metrics): Numerical data for dashboards/alerts"
+        echo "  📋 Annotations: Timeline events in dashboards"
+        echo ""
+        echo "🌐 Endpoint URLs:"
+        echo "  📝 Loki: ${LOKI_URL}"
+        echo "  📊 Prometheus: ${PROMETHEUS_URL}"
+        echo "  📋 Grafana: ${GRAFANA_URL}"
+        echo ""
+        echo "🔧 Integration Configuration:"
+        echo "  📝 Loki: ${{ inputs.enable-loki }}"
+        echo "  📊 Prometheus: ${{ inputs.enable-prometheus }}"
+        echo "  📋 Annotations: ${{ inputs.enable-annotations }}"
+        echo ""
+        
+        # Loki Integration
+        if [ "${{ inputs.enable-loki }}" = "true" ]; then
+          echo "📝 Sending EVENTS to Grafana Loki..."
+          LOKI_ENDPOINT="${LOKI_URL}/loki/api/v1/push"
+          
+          echo '{
+            "streams": [
+              {
+                "stream": {
+                  "app": "'${{ inputs.app-name }}'",
+                  "version": "'${{ inputs.app-version }}'",
+                  "environment": "'${{ inputs.environment }}'",
+                  "source": "github-actions",
+                  "pipeline": "devsecops"
+                },
+                "values": [
+                  ["'${TIMESTAMP}'000000000", "🚀 DevSecOps Pipeline: ${{ inputs.build-status }} | App: ${{ inputs.app-name }} v${{ inputs.app-version }} | Env: ${{ inputs.environment }}"],
+                  ["'${TIMESTAMP}'000000001", "🔍 Security Results - Critical: ${{ inputs.vulnerabilities-critical }}, High: ${{ inputs.vulnerabilities-high }}, Medium: ${{ inputs.vulnerabilities-medium }}, Low: ${{ inputs.vulnerabilities-low }}"],
+                  ["'${TIMESTAMP}'000000002", "📊 Quality Metrics - Coverage: ${{ inputs.code-coverage }}% | Execution Time: ${{ inputs.execution-time }}s"]
+                ]
+              }
+            ]
+          }' > /tmp/loki-logs.json
+          
+          if curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${GRAFANA_API_KEY}" \
+            -d @/tmp/loki-logs.json \
+            "${LOKI_ENDPOINT}" \
+            --silent --show-error; then
+            echo "✅ Events sent to Loki"
+            LOKI_STATUS="success"
+          else
+            echo "⚠️ Loki integration failed"
+            LOKI_STATUS="failed"
+            OVERALL_STATUS="partial"
+          fi
+          
+          rm -f /tmp/loki-logs.json
+        else
+          echo "⏭️ Loki integration disabled"
+        fi
+        
+        # Prometheus Integration
+        if [ "${{ inputs.enable-prometheus }}" = "true" ]; then
+          echo "📊 Sending METRICS to Grafana Prometheus..."
+          
+          BUILD_STATUS_METRIC=0
+          if [ "${{ inputs.build-status }}" = "success" ]; then
+            BUILD_STATUS_METRIC=1
+          fi
+          
+          printf '# HELP devsecops_build_status Build status (1=success, 0=failure)\n# TYPE devsecops_build_status gauge\ndevsecops_build_status{app="${{ inputs.app-name }}",version="${{ inputs.app-version }}",environment="${{ inputs.environment }}"} %s %s000\n\n# HELP devsecops_vulnerabilities_total Total vulnerabilities by severity\n# TYPE devsecops_vulnerabilities_total gauge\ndevsecops_vulnerabilities_total{app="${{ inputs.app-name }}",severity="critical",environment="${{ inputs.environment }}"} ${{ inputs.vulnerabilities-critical }} %s000\ndevsecops_vulnerabilities_total{app="${{ inputs.app-name }}",severity="high",environment="${{ inputs.environment }}"} ${{ inputs.vulnerabilities-high }} %s000\ndevsecops_vulnerabilities_total{app="${{ inputs.app-name }}",severity="medium",environment="${{ inputs.environment }}"} ${{ inputs.vulnerabilities-medium }} %s000\ndevsecops_vulnerabilities_total{app="${{ inputs.app-name }}",severity="low",environment="${{ inputs.environment }}"} ${{ inputs.vulnerabilities-low }} %s000\n\n# HELP devsecops_code_coverage_percent Code coverage percentage\n# TYPE devsecops_code_coverage_percent gauge\ndevsecops_code_coverage_percent{app="${{ inputs.app-name }}",environment="${{ inputs.environment }}"} ${{ inputs.code-coverage }} %s000\n\n# HELP devsecops_execution_time_seconds Pipeline execution time\n# TYPE devsecops_execution_time_seconds gauge\ndevsecops_execution_time_seconds{app="${{ inputs.app-name }}",environment="${{ inputs.environment }}"} ${{ inputs.execution-time }} %s000\n' \
+            "${BUILD_STATUS_METRIC}" "${TIMESTAMP}" "${TIMESTAMP}" "${TIMESTAMP}" "${TIMESTAMP}" "${TIMESTAMP}" "${TIMESTAMP}" "${TIMESTAMP}" > /tmp/prometheus-metrics.txt
+          
+          REMOTE_WRITE_ENDPOINT="${PROMETHEUS_URL}/api/prom/push"
+          
+          if curl -X POST \
+            -H "Content-Type: application/x-protobuf" \
+            -H "Content-Encoding: snappy" \
+            -H "Authorization: Bearer ${GRAFANA_API_KEY}" \
+            -H "X-Prometheus-Remote-Write-Version: 0.1.0" \
+            --data-binary @/tmp/prometheus-metrics.txt \
+            "${REMOTE_WRITE_ENDPOINT}" \
+            --silent --show-error; then
+            echo "✅ Metrics sent to Prometheus"
+            PROMETHEUS_STATUS="success"
+            METRICS_COUNT=6
+          else
+            echo "⚠️ Prometheus integration failed"
+            PROMETHEUS_STATUS="failed"
+            OVERALL_STATUS="partial"
+          fi
+          
+          rm -f /tmp/prometheus-metrics.txt
+        else
+          echo "⏭️ Prometheus integration disabled"
+        fi
+        
+        # Annotations Integration
+        if [ "${{ inputs.enable-annotations }}" = "true" ]; then
+          echo "📋 Sending TIMELINE EVENT to Grafana Annotations..."
+          ANNOTATIONS_ENDPOINT="${GRAFANA_URL}/api/annotations"
+          
+          if curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${GRAFANA_API_KEY}" \
+            -d '{
+              "time": '${TIMESTAMP}'000,
+              "timeEnd": '${TIMESTAMP}'000,
+              "tags": ["'${{ inputs.app-name }}'", "'${{ inputs.environment }}'", "devsecops", "pipeline"],
+              "text": "🚀 DevSecOps Pipeline: '${{ inputs.build-status }}'\n📱 App: '${{ inputs.app-name }}' v'${{ inputs.app-version }}'\n🔍 Vulns: C:'${{ inputs.vulnerabilities-critical }}' H:'${{ inputs.vulnerabilities-high }}' M:'${{ inputs.vulnerabilities-medium }}' L:'${{ inputs.vulnerabilities-low }}'\n📊 Coverage: '${{ inputs.code-coverage }}'% | Time: '${{ inputs.execution-time }}'s"
+            }' \
+            "${ANNOTATIONS_ENDPOINT}" \
+            --silent --show-error; then
+            echo "✅ Timeline event sent to Annotations"
+            ANNOTATIONS_STATUS="success"
+          else
+            echo "⚠️ Annotations integration failed"
+            ANNOTATIONS_STATUS="failed"
+            OVERALL_STATUS="partial"
+          fi
+        else
+          echo "⏭️ Annotations integration disabled"
+        fi
+        
+        # Output Summary
+        echo ""
+        echo "📊 Grafana Cloud Integration Summary:"
+        echo "  🌐 Grafana URL: ${GRAFANA_URL}"
+        echo "  📱 Application: ${{ inputs.app-name }} v${{ inputs.app-version }}"
+        echo "  🏷️  Environment: ${{ inputs.environment }}"
+        echo "  🚀 Build Status: ${{ inputs.build-status }}"
+        echo "  🔍 Vulnerabilities: C:${{ inputs.vulnerabilities-critical }}, H:${{ inputs.vulnerabilities-high }}, M:${{ inputs.vulnerabilities-medium }}, L:${{ inputs.vulnerabilities-low }}"
+        echo "  📊 Coverage: ${{ inputs.code-coverage }}%"
+        echo "  ⏱️  Execution Time: ${{ inputs.execution-time }}s"
+        echo ""
+        echo "🎯 Integration Status:"
+        echo "  📝 Loki: ${LOKI_STATUS}"
+        echo "  📊 Prometheus: ${PROMETHEUS_STATUS}"
+        echo "  📋 Annotations: ${ANNOTATIONS_STATUS}"
+        echo "  📈 Overall: ${OVERALL_STATUS}"
+        echo ""
+        
+        # Set outputs
+        echo "status=${OVERALL_STATUS}" >> $GITHUB_OUTPUT
+        echo "loki-status=${LOKI_STATUS}" >> $GITHUB_OUTPUT
+        echo "prometheus-status=${PROMETHEUS_STATUS}" >> $GITHUB_OUTPUT
+        echo "annotations-status=${ANNOTATIONS_STATUS}" >> $GITHUB_OUTPUT
+        echo "metrics-count=${METRICS_COUNT}" >> $GITHUB_OUTPUT
+
+branding:
+  icon: 'upload-cloud'
+  color: 'orange'

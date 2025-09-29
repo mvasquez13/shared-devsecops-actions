@@ -50,6 +50,17 @@ on:
         description: 'Kubernetes namespace'
         required: true
         type: string
+      # Grafana Cloud integration
+      grafana-url:
+        description: 'Grafana Cloud instance URL'
+        required: false
+        type: string
+        default: ''
+      enable-grafana-metrics:
+        description: 'Enable Grafana Cloud metrics integration'
+        required: false
+        type: boolean
+        default: true
 
     secrets:
       registry-username:
@@ -58,6 +69,9 @@ on:
       registry-password:
         description: 'Container registry password'
         required: true
+      grafana-api-key:
+        description: 'Grafana Cloud API key'
+        required: false
       # azure-credentials:
       #   description: 'Azure credentials for deployment'
       #   required: false
@@ -96,6 +110,9 @@ jobs:
       image-tag: ${{ steps.docker.outputs.full-image-url }}
       image-digest: ${{ steps.docker.outputs.image-digest }}
       semantic-version: ${{ steps.docker.outputs.semantic-version }}
+      build-status: ${{ job.status }}
+      code-coverage: ${{ steps.tests.outputs.coverage-percentage }}
+      execution-time: ${{ steps.timing.outputs.duration }}
     
     steps:
       - name: Checkout code
@@ -103,7 +120,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Start Timer
+        id: start-time
+        run: echo "start-time=$(date +%s)" >> $GITHUB_OUTPUT
+
       - name: Run Tests
+        id: tests
         uses: mvasquez13/shared-devsecops-actions/.github/actions/run-tests/maven@main
         with:
           maven-args: ${{ inputs.maven-args }}
@@ -140,6 +162,14 @@ jobs:
           echo "- **Semantic Version**: ${{ steps.docker.outputs.semantic-version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Image**: \`${{ steps.docker.outputs.full-image-url }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Digest**: \`${{ steps.docker.outputs.image-digest }}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Calculate Execution Time
+        id: timing
+        run: |
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - ${{ steps.start-time.outputs.start-time }}))
+          echo "duration=${DURATION}" >> $GITHUB_OUTPUT
+          echo "⏱️ Build execution time: ${DURATION} seconds"
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔒 Security Policy" >> $GITHUB_STEP_SUMMARY
           echo "- **Vulnerability Policy**: 🤖 Auto-detected based on branch type" >> $GITHUB_STEP_SUMMARY
@@ -149,6 +179,12 @@ jobs:
   sast_analysis:
     name: SAST Analysis
     runs-on: ubuntu-latest
+    outputs:
+      sast-critical: ${{ steps.sast.outputs.critical-count }}
+      sast-high: ${{ steps.sast.outputs.high-count }}
+      sast-medium: ${{ steps.sast.outputs.medium-count }}
+      sast-low: ${{ steps.sast.outputs.low-count }}
+      sast-status: ${{ job.status }}
     permissions: 
       security-events: write 
       actions: read
@@ -163,6 +199,7 @@ jobs:
           fetch-depth: 0
 
       - name: SAST Scan with CodeQL
+        id: sast
         uses: mvasquez13/shared-devsecops-actions/.github/actions/sast-scanner@main
         with:
           language: 'java-kotlin'
@@ -171,6 +208,12 @@ jobs:
   sca_analysis:
     name: SCA Analysis
     runs-on: ubuntu-latest
+    outputs:
+      sca-critical: ${{ steps.sca.outputs.critical-count }}
+      sca-high: ${{ steps.sca.outputs.high-count }}
+      sca-medium: ${{ steps.sca.outputs.medium-count }}
+      sca-low: ${{ steps.sca.outputs.low-count }}
+      sca-status: ${{ job.status }}
     permissions: 
       security-events: write 
       actions: read
@@ -185,6 +228,7 @@ jobs:
           fetch-depth: 0
 
       - name: Dependabot SCA Analysis
+        id: sca
         uses: mvasquez13/shared-devsecops-actions/.github/actions/sca-scanner@main
         with:
           package-manager: 'maven'
@@ -192,15 +236,13 @@ jobs:
           fail-on-high: 'false'
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-  # deploy-staging:
-  #   name: Deploy to Staging
-  #   if: inputs.deploy-to-staging && (github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main')
+  # deploy:
+  #   name: Deploy
   #   needs: build
   #   runs-on: ubuntu-latest
-  #   environment: staging
     
   #   steps:
-  #     - name: Deploy to Staging
+  #     - name: Deploy
   #       uses: mvasquez13/shared-devsecops-actions/.github/actions/deploy-k8s@main
   #       with:
   #         image-tag: ${{ needs.build.outputs.image-tag }}
@@ -209,38 +251,83 @@ jobs:
   #         azure-credentials: ${{ secrets.azure-credentials }}
   #         k8s-config: ${{ secrets.k8s-config }}
 
-  # deploy-production:
-  #   name: Deploy to Production
-  #   if: inputs.deploy-to-production && github.ref == 'refs/heads/main'
-  #   needs: build
-  #   runs-on: ubuntu-latest
-  #   environment: production
+  notify:
+    name: Notify Grafana Cloud
+    if: always() && inputs.enable-grafana-metrics
+    needs: [build, sast_analysis, sca_analysis]
+    runs-on: ubuntu-latest
     
-  #   outputs:
-  #     url: ${{ steps.deploy.outputs.url }}
-    
-  #   steps:
-  #     - name: Deploy to Production
-  #       id: deploy
-  #       uses: mvasquez13/shared-devsecops-actions/.github/actions/deploy-k8s@main
-  #       with:
-  #         image-tag: ${{ needs.build.outputs.image-tag }}
-  #         namespace: ${{ inputs.k8s-namespace }}-production
-  #         environment: production
-  #         azure-credentials: ${{ secrets.azure-credentials }}
-  #         k8s-config: ${{ secrets.k8s-config }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-  # notify:
-  #   name: Notify Teams
-  #   if: always()
-  #   needs: [build, deploy-staging, deploy-production]
-  #   runs-on: ubuntu-latest
-    
-  #   steps:
-  #     - name: Notify Microsoft Teams
-  #       uses: mvasquez13/shared-devsecops-actions/.github/actions/notify-teams@main
-  #       with:
-  #         status: ${{ job.status }}
-  #         app-name: ${{ inputs.app-name }}
-  #         image-tag: ${{ needs.build.outputs.image-tag }}
-  #         deployment-url: ${{ needs.deploy-production.outputs.url }}
+      - name: Calculate Overall Status
+        id: overall-status
+        run: |
+          BUILD_STATUS="${{ needs.build.result }}"
+          SAST_STATUS="${{ needs.sast_analysis.result }}"
+          SCA_STATUS="${{ needs.sca_analysis.result }}"
+          
+          echo "🔍 Job Results:"
+          echo "  Build: ${BUILD_STATUS}"
+          echo "  SAST: ${SAST_STATUS}"
+          echo "  SCA: ${SCA_STATUS}"
+          
+          # Determine overall status
+          if [[ "${BUILD_STATUS}" == "success" && "${SAST_STATUS}" == "success" && "${SCA_STATUS}" == "success" ]]; then
+            OVERALL_STATUS="success"
+          elif [[ "${BUILD_STATUS}" == "failure" || "${SAST_STATUS}" == "failure" || "${SCA_STATUS}" == "failure" ]]; then
+            OVERALL_STATUS="failure"
+          else
+            OVERALL_STATUS="partial"
+          fi
+          
+          echo "overall-status=${OVERALL_STATUS}" >> $GITHUB_OUTPUT
+          echo "📊 Overall Status: ${OVERALL_STATUS}"
+
+      - name: Calculate Total Vulnerabilities
+        id: vulnerabilities
+        run: |
+          # SAST vulnerabilities (with fallback to 0)
+          SAST_CRITICAL="${{ needs.sast_analysis.outputs.sast-critical || 0 }}"
+          SAST_HIGH="${{ needs.sast_analysis.outputs.sast-high || 0 }}"
+          SAST_MEDIUM="${{ needs.sast_analysis.outputs.sast-medium || 0 }}"
+          SAST_LOW="${{ needs.sast_analysis.outputs.sast-low || 0 }}"
+          
+          # SCA vulnerabilities (with fallback to 0)
+          SCA_CRITICAL="${{ needs.sca_analysis.outputs.sca-critical || 0 }}"
+          SCA_HIGH="${{ needs.sca_analysis.outputs.sca-high || 0 }}"
+          SCA_MEDIUM="${{ needs.sca_analysis.outputs.sca-medium || 0 }}"
+          SCA_LOW="${{ needs.sca_analysis.outputs.sca-low || 0 }}"
+          
+          # Calculate totals
+          TOTAL_CRITICAL=$((SAST_CRITICAL + SCA_CRITICAL))
+          TOTAL_HIGH=$((SAST_HIGH + SCA_HIGH))
+          TOTAL_MEDIUM=$((SAST_MEDIUM + SCA_MEDIUM))
+          TOTAL_LOW=$((SAST_LOW + SCA_LOW))
+          
+          echo "🔍 Vulnerability Summary:"
+          echo "  Critical: ${TOTAL_CRITICAL} (SAST: ${SAST_CRITICAL}, SCA: ${SCA_CRITICAL})"
+          echo "  High: ${TOTAL_HIGH} (SAST: ${SAST_HIGH}, SCA: ${SCA_HIGH})"
+          echo "  Medium: ${TOTAL_MEDIUM} (SAST: ${SAST_MEDIUM}, SCA: ${SCA_MEDIUM})"
+          echo "  Low: ${TOTAL_LOW} (SAST: ${SAST_LOW}, SCA: ${SCA_LOW})"
+          
+          echo "critical=${TOTAL_CRITICAL}" >> $GITHUB_OUTPUT
+          echo "high=${TOTAL_HIGH}" >> $GITHUB_OUTPUT
+          echo "medium=${TOTAL_MEDIUM}" >> $GITHUB_OUTPUT
+          echo "low=${TOTAL_LOW}" >> $GITHUB_OUTPUT
+
+      - name: Send Metrics to Grafana Cloud
+        uses: ./shared-devsecops-actions/.github/actions/notify-grafana
+        with:
+          grafana-api-key: ${{ secrets.GRAFANA_API_KEY }}
+          app-name: ${{ inputs.app-name }}
+          app-version: ${{ needs.build.outputs.semantic-version || github.sha }}
+          environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'develop' && 'staging' || 'development' }}
+          build-status: ${{ steps.overall-status.outputs.overall-status }}
+          vulnerabilities-critical: ${{ steps.vulnerabilities.outputs.critical }}
+          vulnerabilities-high: ${{ steps.vulnerabilities.outputs.high }}
+          vulnerabilities-medium: ${{ steps.vulnerabilities.outputs.medium }}
+          vulnerabilities-low: ${{ steps.vulnerabilities.outputs.low }}
+          code-coverage: ${{ needs.build.outputs.code-coverage || 0 }}
+          execution-time: ${{ needs.build.outputs.execution-time || 0 }}
