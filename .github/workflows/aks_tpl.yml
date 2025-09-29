@@ -184,12 +184,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: SCA Scan
+      - name: Dependabot SCA Analysis
         uses: mvasquez13/shared-devsecops-actions/.github/actions/sca-scanner@main
         with:
           package-manager: 'maven'
           fail-on-critical: 'false'
           fail-on-high: 'false'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
   # deploy-staging:
   #   name: Deploy to Staging
